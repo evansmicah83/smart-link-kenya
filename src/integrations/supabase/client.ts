@@ -2,39 +2,87 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-function createSupabaseClient() {
-  // Use import.meta.env for client-side (Vite build-time replacement)
-  // Fall back to process.env for SSR (server-side rendering)
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+// Extended type that merges the generated types with all runtime tables from migrations
+type AnyRecord = { [key: string]: any };
 
-  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+type ExtendedDatabase = Database & {
+  public: Database['public'] & {
+    Tables: Database['public']['Tables'] & {
+      packages: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      customers: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      customer_documents: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      customer_notes: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      routers: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      router_backups: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      subscriptions: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      vouchers: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      wallets: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      wallet_transactions: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      invoices: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      invoice_items: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      payments: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      mpesa_callbacks: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      radius_users: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      network_adapters: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      ip_pools: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      wan_links: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      voucher_batches: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      wallets: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      wallet_transactions: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      invoices: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      invoice_items: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      payments: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      mpesa_callbacks: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      voucher_batches: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      vouchers: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      sessions: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      expenses: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      inventory: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      tickets: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      ticket_messages: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      installations: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      notifications: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      sms_logs: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+      settings: { Row: AnyRecord; Insert: AnyRecord; Update: AnyRecord; Relationships: [] };
+    };
+  };
+};
+
+function createSupabaseClient() {
+  const isServer = typeof window === 'undefined';
+
+  const SUPABASE_URL = isServer
+    ? process.env.SUPABASE_URL
+    : (import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL);
+  const SUPABASE_ANON_KEY = isServer
+    ? process.env.SUPABASE_ANON_KEY
+    : (import.meta.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY);
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     const missing = [
       ...(!SUPABASE_URL ? ['SUPABASE_URL'] : []),
-      ...(!SUPABASE_PUBLISHABLE_KEY ? ['SUPABASE_PUBLISHABLE_KEY'] : []),
+      ...(!SUPABASE_ANON_KEY ? ['SUPABASE_ANON_KEY'] : []),
     ];
-    const message = `Missing Supabase environment variable(s): ${missing.join(', ')}. Connect Supabase in Lovable Cloud.`;
-    console.error(`[Supabase] ${message}`);
-    throw new Error(message);
+    throw new Error(`Missing Supabase environment variable(s): ${missing.join(', ')}`);
   }
 
-  return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  return createClient<ExtendedDatabase>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
-      storage: typeof window !== 'undefined' ? localStorage : undefined,
-      persistSession: true,
-      autoRefreshToken: true,
+      storage: isServer ? undefined : localStorage,
+      persistSession: !isServer,
+      autoRefreshToken: !isServer,
     }
   });
 }
 
-let _supabase: ReturnType<typeof createSupabaseClient> | undefined;
+// Use separate instances for server and client to avoid stale closures
+const _instances: { server?: ReturnType<typeof createSupabaseClient>; client?: ReturnType<typeof createSupabaseClient> } = {};
 
-// Import the supabase client like this:
-// import { supabase } from "@/integrations/supabase/client";
 export const supabase = new Proxy({} as ReturnType<typeof createSupabaseClient>, {
   get(_, prop, receiver) {
-    if (!_supabase) _supabase = createSupabaseClient();
-    return Reflect.get(_supabase, prop, receiver);
+    const key = typeof window === 'undefined' ? 'server' : 'client';
+    if (!_instances[key]) _instances[key] = createSupabaseClient();
+    return Reflect.get(_instances[key]!, prop, receiver);
   },
 });
 

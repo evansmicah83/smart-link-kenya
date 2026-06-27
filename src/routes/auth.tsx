@@ -27,6 +27,7 @@ export const Route = createFileRoute("/auth")({
 function AuthPage() {
   const navigate = useNavigate();
   const search = Route.useSearch();
+  const [mounted, setMounted] = useState(false);
   const [mode, setMode] = useState<"signin" | "signup">(search.mode ?? "signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -35,11 +36,16 @@ function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
 
+  useEffect(() => { setMounted(true); }, []);
+
   useEffect(() => {
+    if (!mounted) return;
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) navigate({ to: "/dashboard" });
     });
-  }, [navigate]);
+  }, [mounted, navigate]);
+
+  if (!mounted) return null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -152,14 +158,14 @@ function AuthPage() {
               <input
                 type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
                 className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
-                placeholder="you@company.co.ke"
+                placeholder="Email"
               />
             </Field>
             <Field label="Password">
               <input
                 type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)}
                 className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
-                placeholder="••••••••"
+                placeholder="Password"
               />
             </Field>
             <button

@@ -12,6 +12,8 @@ dist
 dist-ssr
 .output
 .vinxi
+.env
+.env.*
 .tanstack/**
 .nitro
 *.local

@@ -12,8 +12,30 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as PortalIndexRouteImport } from './routes/portal/index'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
+import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
+import { Route as AuthenticatedVouchersIndexRouteImport } from './routes/_authenticated/vouchers/index'
+import { Route as AuthenticatedTechniciansIndexRouteImport } from './routes/_authenticated/technicians/index'
+import { Route as AuthenticatedSupportIndexRouteImport } from './routes/_authenticated/support/index'
+import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated/settings/index'
+import { Route as AuthenticatedRoutersIndexRouteImport } from './routes/_authenticated/routers/index'
+import { Route as AuthenticatedReportsIndexRouteImport } from './routes/_authenticated/reports/index'
+import { Route as AuthenticatedProvisioningIndexRouteImport } from './routes/_authenticated/provisioning/index'
+import { Route as AuthenticatedPppoeIndexRouteImport } from './routes/_authenticated/pppoe/index'
+import { Route as AuthenticatedPortalManagerIndexRouteImport } from './routes/_authenticated/portal-manager/index'
+import { Route as AuthenticatedPackagesIndexRouteImport } from './routes/_authenticated/packages/index'
+import { Route as AuthenticatedNocIndexRouteImport } from './routes/_authenticated/noc/index'
+import { Route as AuthenticatedMarketingIndexRouteImport } from './routes/_authenticated/marketing/index'
+import { Route as AuthenticatedMapIndexRouteImport } from './routes/_authenticated/map/index'
+import { Route as AuthenticatedInventoryIndexRouteImport } from './routes/_authenticated/inventory/index'
+import { Route as AuthenticatedHotspotIndexRouteImport } from './routes/_authenticated/hotspot/index'
+import { Route as AuthenticatedFiberIndexRouteImport } from './routes/_authenticated/fiber/index'
+import { Route as AuthenticatedCustomersIndexRouteImport } from './routes/_authenticated/customers/index'
+import { Route as AuthenticatedBillingIndexRouteImport } from './routes/_authenticated/billing/index'
+import { Route as AuthenticatedAutomationIndexRouteImport } from './routes/_authenticated/automation/index'
+import { Route as AuthenticatedAaaIndexRouteImport } from './routes/_authenticated/aaa/index'
 
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
@@ -29,6 +51,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PortalIndexRoute = PortalIndexRouteImport.update({
+  id: '/portal/',
+  path: '/portal/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -39,18 +66,183 @@ const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
   path: '/admin',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedWalletIndexRoute =
+  AuthenticatedWalletIndexRouteImport.update({
+    id: '/wallet/',
+    path: '/wallet/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedVouchersIndexRoute =
+  AuthenticatedVouchersIndexRouteImport.update({
+    id: '/vouchers/',
+    path: '/vouchers/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedTechniciansIndexRoute =
+  AuthenticatedTechniciansIndexRouteImport.update({
+    id: '/technicians/',
+    path: '/technicians/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedSupportIndexRoute =
+  AuthenticatedSupportIndexRouteImport.update({
+    id: '/support/',
+    path: '/support/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedSettingsIndexRoute =
+  AuthenticatedSettingsIndexRouteImport.update({
+    id: '/settings/',
+    path: '/settings/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedRoutersIndexRoute =
+  AuthenticatedRoutersIndexRouteImport.update({
+    id: '/routers/',
+    path: '/routers/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedReportsIndexRoute =
+  AuthenticatedReportsIndexRouteImport.update({
+    id: '/reports/',
+    path: '/reports/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedProvisioningIndexRoute =
+  AuthenticatedProvisioningIndexRouteImport.update({
+    id: '/provisioning/',
+    path: '/provisioning/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedPppoeIndexRoute = AuthenticatedPppoeIndexRouteImport.update({
+  id: '/pppoe/',
+  path: '/pppoe/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedPortalManagerIndexRoute =
+  AuthenticatedPortalManagerIndexRouteImport.update({
+    id: '/portal-manager/',
+    path: '/portal-manager/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedPackagesIndexRoute =
+  AuthenticatedPackagesIndexRouteImport.update({
+    id: '/packages/',
+    path: '/packages/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedNocIndexRoute = AuthenticatedNocIndexRouteImport.update({
+  id: '/noc/',
+  path: '/noc/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedMarketingIndexRoute =
+  AuthenticatedMarketingIndexRouteImport.update({
+    id: '/marketing/',
+    path: '/marketing/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedMapIndexRoute = AuthenticatedMapIndexRouteImport.update({
+  id: '/map/',
+  path: '/map/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedInventoryIndexRoute =
+  AuthenticatedInventoryIndexRouteImport.update({
+    id: '/inventory/',
+    path: '/inventory/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedHotspotIndexRoute =
+  AuthenticatedHotspotIndexRouteImport.update({
+    id: '/hotspot/',
+    path: '/hotspot/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedFiberIndexRoute = AuthenticatedFiberIndexRouteImport.update({
+  id: '/fiber/',
+  path: '/fiber/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedCustomersIndexRoute =
+  AuthenticatedCustomersIndexRouteImport.update({
+    id: '/customers/',
+    path: '/customers/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedBillingIndexRoute =
+  AuthenticatedBillingIndexRouteImport.update({
+    id: '/billing/',
+    path: '/billing/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedAutomationIndexRoute =
+  AuthenticatedAutomationIndexRouteImport.update({
+    id: '/automation/',
+    path: '/automation/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedAaaIndexRoute = AuthenticatedAaaIndexRouteImport.update({
+  id: '/aaa/',
+  path: '/aaa/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/portal/': typeof PortalIndexRoute
+  '/aaa/': typeof AuthenticatedAaaIndexRoute
+  '/automation/': typeof AuthenticatedAutomationIndexRoute
+  '/billing/': typeof AuthenticatedBillingIndexRoute
+  '/customers/': typeof AuthenticatedCustomersIndexRoute
+  '/fiber/': typeof AuthenticatedFiberIndexRoute
+  '/hotspot/': typeof AuthenticatedHotspotIndexRoute
+  '/inventory/': typeof AuthenticatedInventoryIndexRoute
+  '/map/': typeof AuthenticatedMapIndexRoute
+  '/marketing/': typeof AuthenticatedMarketingIndexRoute
+  '/noc/': typeof AuthenticatedNocIndexRoute
+  '/packages/': typeof AuthenticatedPackagesIndexRoute
+  '/portal-manager/': typeof AuthenticatedPortalManagerIndexRoute
+  '/pppoe/': typeof AuthenticatedPppoeIndexRoute
+  '/provisioning/': typeof AuthenticatedProvisioningIndexRoute
+  '/reports/': typeof AuthenticatedReportsIndexRoute
+  '/routers/': typeof AuthenticatedRoutersIndexRoute
+  '/settings/': typeof AuthenticatedSettingsIndexRoute
+  '/support/': typeof AuthenticatedSupportIndexRoute
+  '/technicians/': typeof AuthenticatedTechniciansIndexRoute
+  '/vouchers/': typeof AuthenticatedVouchersIndexRoute
+  '/wallet/': typeof AuthenticatedWalletIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/portal': typeof PortalIndexRoute
+  '/aaa': typeof AuthenticatedAaaIndexRoute
+  '/automation': typeof AuthenticatedAutomationIndexRoute
+  '/billing': typeof AuthenticatedBillingIndexRoute
+  '/customers': typeof AuthenticatedCustomersIndexRoute
+  '/fiber': typeof AuthenticatedFiberIndexRoute
+  '/hotspot': typeof AuthenticatedHotspotIndexRoute
+  '/inventory': typeof AuthenticatedInventoryIndexRoute
+  '/map': typeof AuthenticatedMapIndexRoute
+  '/marketing': typeof AuthenticatedMarketingIndexRoute
+  '/noc': typeof AuthenticatedNocIndexRoute
+  '/packages': typeof AuthenticatedPackagesIndexRoute
+  '/portal-manager': typeof AuthenticatedPortalManagerIndexRoute
+  '/pppoe': typeof AuthenticatedPppoeIndexRoute
+  '/provisioning': typeof AuthenticatedProvisioningIndexRoute
+  '/reports': typeof AuthenticatedReportsIndexRoute
+  '/routers': typeof AuthenticatedRoutersIndexRoute
+  '/settings': typeof AuthenticatedSettingsIndexRoute
+  '/support': typeof AuthenticatedSupportIndexRoute
+  '/technicians': typeof AuthenticatedTechniciansIndexRoute
+  '/vouchers': typeof AuthenticatedVouchersIndexRoute
+  '/wallet': typeof AuthenticatedWalletIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -59,12 +251,86 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/portal/': typeof PortalIndexRoute
+  '/_authenticated/aaa/': typeof AuthenticatedAaaIndexRoute
+  '/_authenticated/automation/': typeof AuthenticatedAutomationIndexRoute
+  '/_authenticated/billing/': typeof AuthenticatedBillingIndexRoute
+  '/_authenticated/customers/': typeof AuthenticatedCustomersIndexRoute
+  '/_authenticated/fiber/': typeof AuthenticatedFiberIndexRoute
+  '/_authenticated/hotspot/': typeof AuthenticatedHotspotIndexRoute
+  '/_authenticated/inventory/': typeof AuthenticatedInventoryIndexRoute
+  '/_authenticated/map/': typeof AuthenticatedMapIndexRoute
+  '/_authenticated/marketing/': typeof AuthenticatedMarketingIndexRoute
+  '/_authenticated/noc/': typeof AuthenticatedNocIndexRoute
+  '/_authenticated/packages/': typeof AuthenticatedPackagesIndexRoute
+  '/_authenticated/portal-manager/': typeof AuthenticatedPortalManagerIndexRoute
+  '/_authenticated/pppoe/': typeof AuthenticatedPppoeIndexRoute
+  '/_authenticated/provisioning/': typeof AuthenticatedProvisioningIndexRoute
+  '/_authenticated/reports/': typeof AuthenticatedReportsIndexRoute
+  '/_authenticated/routers/': typeof AuthenticatedRoutersIndexRoute
+  '/_authenticated/settings/': typeof AuthenticatedSettingsIndexRoute
+  '/_authenticated/support/': typeof AuthenticatedSupportIndexRoute
+  '/_authenticated/technicians/': typeof AuthenticatedTechniciansIndexRoute
+  '/_authenticated/vouchers/': typeof AuthenticatedVouchersIndexRoute
+  '/_authenticated/wallet/': typeof AuthenticatedWalletIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/admin' | '/dashboard'
+  fullPaths:
+    | '/'
+    | '/auth'
+    | '/admin'
+    | '/dashboard'
+    | '/portal/'
+    | '/aaa/'
+    | '/automation/'
+    | '/billing/'
+    | '/customers/'
+    | '/fiber/'
+    | '/hotspot/'
+    | '/inventory/'
+    | '/map/'
+    | '/marketing/'
+    | '/noc/'
+    | '/packages/'
+    | '/portal-manager/'
+    | '/pppoe/'
+    | '/provisioning/'
+    | '/reports/'
+    | '/routers/'
+    | '/settings/'
+    | '/support/'
+    | '/technicians/'
+    | '/vouchers/'
+    | '/wallet/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/admin' | '/dashboard'
+  to:
+    | '/'
+    | '/auth'
+    | '/admin'
+    | '/dashboard'
+    | '/portal'
+    | '/aaa'
+    | '/automation'
+    | '/billing'
+    | '/customers'
+    | '/fiber'
+    | '/hotspot'
+    | '/inventory'
+    | '/map'
+    | '/marketing'
+    | '/noc'
+    | '/packages'
+    | '/portal-manager'
+    | '/pppoe'
+    | '/provisioning'
+    | '/reports'
+    | '/routers'
+    | '/settings'
+    | '/support'
+    | '/technicians'
+    | '/vouchers'
+    | '/wallet'
   id:
     | '__root__'
     | '/'
@@ -72,12 +338,35 @@ export interface FileRouteTypes {
     | '/auth'
     | '/_authenticated/admin'
     | '/_authenticated/dashboard'
+    | '/portal/'
+    | '/_authenticated/aaa/'
+    | '/_authenticated/automation/'
+    | '/_authenticated/billing/'
+    | '/_authenticated/customers/'
+    | '/_authenticated/fiber/'
+    | '/_authenticated/hotspot/'
+    | '/_authenticated/inventory/'
+    | '/_authenticated/map/'
+    | '/_authenticated/marketing/'
+    | '/_authenticated/noc/'
+    | '/_authenticated/packages/'
+    | '/_authenticated/portal-manager/'
+    | '/_authenticated/pppoe/'
+    | '/_authenticated/provisioning/'
+    | '/_authenticated/reports/'
+    | '/_authenticated/routers/'
+    | '/_authenticated/settings/'
+    | '/_authenticated/support/'
+    | '/_authenticated/technicians/'
+    | '/_authenticated/vouchers/'
+    | '/_authenticated/wallet/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  PortalIndexRoute: typeof PortalIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -103,6 +392,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/portal/': {
+      id: '/portal/'
+      path: '/portal'
+      fullPath: '/portal/'
+      preLoaderRoute: typeof PortalIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/dashboard': {
       id: '/_authenticated/dashboard'
       path: '/dashboard'
@@ -117,17 +413,206 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/wallet/': {
+      id: '/_authenticated/wallet/'
+      path: '/wallet'
+      fullPath: '/wallet/'
+      preLoaderRoute: typeof AuthenticatedWalletIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/vouchers/': {
+      id: '/_authenticated/vouchers/'
+      path: '/vouchers'
+      fullPath: '/vouchers/'
+      preLoaderRoute: typeof AuthenticatedVouchersIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/technicians/': {
+      id: '/_authenticated/technicians/'
+      path: '/technicians'
+      fullPath: '/technicians/'
+      preLoaderRoute: typeof AuthenticatedTechniciansIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/support/': {
+      id: '/_authenticated/support/'
+      path: '/support'
+      fullPath: '/support/'
+      preLoaderRoute: typeof AuthenticatedSupportIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/settings/': {
+      id: '/_authenticated/settings/'
+      path: '/settings'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof AuthenticatedSettingsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/routers/': {
+      id: '/_authenticated/routers/'
+      path: '/routers'
+      fullPath: '/routers/'
+      preLoaderRoute: typeof AuthenticatedRoutersIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/reports/': {
+      id: '/_authenticated/reports/'
+      path: '/reports'
+      fullPath: '/reports/'
+      preLoaderRoute: typeof AuthenticatedReportsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/provisioning/': {
+      id: '/_authenticated/provisioning/'
+      path: '/provisioning'
+      fullPath: '/provisioning/'
+      preLoaderRoute: typeof AuthenticatedProvisioningIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/pppoe/': {
+      id: '/_authenticated/pppoe/'
+      path: '/pppoe'
+      fullPath: '/pppoe/'
+      preLoaderRoute: typeof AuthenticatedPppoeIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/portal-manager/': {
+      id: '/_authenticated/portal-manager/'
+      path: '/portal-manager'
+      fullPath: '/portal-manager/'
+      preLoaderRoute: typeof AuthenticatedPortalManagerIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/packages/': {
+      id: '/_authenticated/packages/'
+      path: '/packages'
+      fullPath: '/packages/'
+      preLoaderRoute: typeof AuthenticatedPackagesIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/noc/': {
+      id: '/_authenticated/noc/'
+      path: '/noc'
+      fullPath: '/noc/'
+      preLoaderRoute: typeof AuthenticatedNocIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/marketing/': {
+      id: '/_authenticated/marketing/'
+      path: '/marketing'
+      fullPath: '/marketing/'
+      preLoaderRoute: typeof AuthenticatedMarketingIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/map/': {
+      id: '/_authenticated/map/'
+      path: '/map'
+      fullPath: '/map/'
+      preLoaderRoute: typeof AuthenticatedMapIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/inventory/': {
+      id: '/_authenticated/inventory/'
+      path: '/inventory'
+      fullPath: '/inventory/'
+      preLoaderRoute: typeof AuthenticatedInventoryIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/hotspot/': {
+      id: '/_authenticated/hotspot/'
+      path: '/hotspot'
+      fullPath: '/hotspot/'
+      preLoaderRoute: typeof AuthenticatedHotspotIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/fiber/': {
+      id: '/_authenticated/fiber/'
+      path: '/fiber'
+      fullPath: '/fiber/'
+      preLoaderRoute: typeof AuthenticatedFiberIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/customers/': {
+      id: '/_authenticated/customers/'
+      path: '/customers'
+      fullPath: '/customers/'
+      preLoaderRoute: typeof AuthenticatedCustomersIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/billing/': {
+      id: '/_authenticated/billing/'
+      path: '/billing'
+      fullPath: '/billing/'
+      preLoaderRoute: typeof AuthenticatedBillingIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/automation/': {
+      id: '/_authenticated/automation/'
+      path: '/automation'
+      fullPath: '/automation/'
+      preLoaderRoute: typeof AuthenticatedAutomationIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/aaa/': {
+      id: '/_authenticated/aaa/'
+      path: '/aaa'
+      fullPath: '/aaa/'
+      preLoaderRoute: typeof AuthenticatedAaaIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedAdminRoute: typeof AuthenticatedAdminRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedAaaIndexRoute: typeof AuthenticatedAaaIndexRoute
+  AuthenticatedAutomationIndexRoute: typeof AuthenticatedAutomationIndexRoute
+  AuthenticatedBillingIndexRoute: typeof AuthenticatedBillingIndexRoute
+  AuthenticatedCustomersIndexRoute: typeof AuthenticatedCustomersIndexRoute
+  AuthenticatedFiberIndexRoute: typeof AuthenticatedFiberIndexRoute
+  AuthenticatedHotspotIndexRoute: typeof AuthenticatedHotspotIndexRoute
+  AuthenticatedInventoryIndexRoute: typeof AuthenticatedInventoryIndexRoute
+  AuthenticatedMapIndexRoute: typeof AuthenticatedMapIndexRoute
+  AuthenticatedMarketingIndexRoute: typeof AuthenticatedMarketingIndexRoute
+  AuthenticatedNocIndexRoute: typeof AuthenticatedNocIndexRoute
+  AuthenticatedPackagesIndexRoute: typeof AuthenticatedPackagesIndexRoute
+  AuthenticatedPortalManagerIndexRoute: typeof AuthenticatedPortalManagerIndexRoute
+  AuthenticatedPppoeIndexRoute: typeof AuthenticatedPppoeIndexRoute
+  AuthenticatedProvisioningIndexRoute: typeof AuthenticatedProvisioningIndexRoute
+  AuthenticatedReportsIndexRoute: typeof AuthenticatedReportsIndexRoute
+  AuthenticatedRoutersIndexRoute: typeof AuthenticatedRoutersIndexRoute
+  AuthenticatedSettingsIndexRoute: typeof AuthenticatedSettingsIndexRoute
+  AuthenticatedSupportIndexRoute: typeof AuthenticatedSupportIndexRoute
+  AuthenticatedTechniciansIndexRoute: typeof AuthenticatedTechniciansIndexRoute
+  AuthenticatedVouchersIndexRoute: typeof AuthenticatedVouchersIndexRoute
+  AuthenticatedWalletIndexRoute: typeof AuthenticatedWalletIndexRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAdminRoute: AuthenticatedAdminRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedAaaIndexRoute: AuthenticatedAaaIndexRoute,
+  AuthenticatedAutomationIndexRoute: AuthenticatedAutomationIndexRoute,
+  AuthenticatedBillingIndexRoute: AuthenticatedBillingIndexRoute,
+  AuthenticatedCustomersIndexRoute: AuthenticatedCustomersIndexRoute,
+  AuthenticatedFiberIndexRoute: AuthenticatedFiberIndexRoute,
+  AuthenticatedHotspotIndexRoute: AuthenticatedHotspotIndexRoute,
+  AuthenticatedInventoryIndexRoute: AuthenticatedInventoryIndexRoute,
+  AuthenticatedMapIndexRoute: AuthenticatedMapIndexRoute,
+  AuthenticatedMarketingIndexRoute: AuthenticatedMarketingIndexRoute,
+  AuthenticatedNocIndexRoute: AuthenticatedNocIndexRoute,
+  AuthenticatedPackagesIndexRoute: AuthenticatedPackagesIndexRoute,
+  AuthenticatedPortalManagerIndexRoute: AuthenticatedPortalManagerIndexRoute,
+  AuthenticatedPppoeIndexRoute: AuthenticatedPppoeIndexRoute,
+  AuthenticatedProvisioningIndexRoute: AuthenticatedProvisioningIndexRoute,
+  AuthenticatedReportsIndexRoute: AuthenticatedReportsIndexRoute,
+  AuthenticatedRoutersIndexRoute: AuthenticatedRoutersIndexRoute,
+  AuthenticatedSettingsIndexRoute: AuthenticatedSettingsIndexRoute,
+  AuthenticatedSupportIndexRoute: AuthenticatedSupportIndexRoute,
+  AuthenticatedTechniciansIndexRoute: AuthenticatedTechniciansIndexRoute,
+  AuthenticatedVouchersIndexRoute: AuthenticatedVouchersIndexRoute,
+  AuthenticatedWalletIndexRoute: AuthenticatedWalletIndexRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =
@@ -137,7 +622,18 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  PortalIndexRoute: PortalIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

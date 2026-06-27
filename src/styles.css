@@ -47,10 +47,58 @@
   --shadow-glow: 0 0 40px -10px oklch(0.72 0.16 215 / 0.5);
 }
 
-/* SmartLinkNet — Deep tech navy */
+/* SmartLinkNet — Light theme (default) */
 :root {
   --radius: 0.625rem;
 
+  --background: oklch(0.97 0.005 250);
+  --foreground: oklch(0.18 0.04 260);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.04 260);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.04 260);
+
+  --primary: oklch(0.55 0.18 215);          /* cyan accent — darker for light bg */
+  --primary-foreground: oklch(0.99 0.005 240);
+
+  --secondary: oklch(0.92 0.03 260);
+  --secondary-foreground: oklch(0.20 0.06 265);
+
+  --muted: oklch(0.93 0.01 255);
+  --muted-foreground: oklch(0.50 0.04 255);
+
+  --accent: oklch(0.91 0.03 260);
+  --accent-foreground: oklch(0.18 0.04 260);
+
+  --destructive: oklch(0.58 0.22 25);
+  --destructive-foreground: oklch(0.99 0.01 240);
+
+  --success: oklch(0.60 0.17 155);
+  --success-foreground: oklch(0.99 0.01 240);
+
+  --warning: oklch(0.68 0.16 75);
+  --warning-foreground: oklch(0.14 0.04 260);
+
+  --border: oklch(0.88 0.02 255);
+  --input: oklch(0.88 0.02 255);
+  --ring: oklch(0.55 0.18 215);
+
+  --sidebar: oklch(0.99 0.005 250);
+  --sidebar-foreground: oklch(0.25 0.04 260);
+  --sidebar-primary: oklch(0.55 0.18 215);
+  --sidebar-primary-foreground: oklch(0.99 0.005 240);
+  --sidebar-accent: oklch(0.93 0.02 255);
+  --sidebar-accent-foreground: oklch(0.18 0.04 260);
+  --sidebar-border: oklch(0.88 0.02 255);
+
+  --gradient-hero: radial-gradient(ellipse at top, oklch(0.75 0.10 215 / 0.25), transparent 60%),
+                   linear-gradient(180deg, oklch(0.97 0.005 250), oklch(0.93 0.01 255));
+}
+
+/* SmartLinkNet — Dark theme */
+.dark {
   --background: oklch(0.16 0.04 260);
   --foreground: oklch(0.96 0.01 240);
 
@@ -60,10 +108,10 @@
   --popover: oklch(0.21 0.05 260);
   --popover-foreground: oklch(0.96 0.01 240);
 
-  --primary: oklch(0.72 0.16 215);          /* cyan accent */
+  --primary: oklch(0.72 0.16 215);
   --primary-foreground: oklch(0.15 0.04 260);
 
-  --secondary: oklch(0.34 0.12 265);        /* indigo */
+  --secondary: oklch(0.34 0.12 265);
   --secondary-foreground: oklch(0.97 0.01 240);
 
   --muted: oklch(0.26 0.04 260);
@@ -97,16 +145,26 @@
                    linear-gradient(180deg, oklch(0.16 0.04 260), oklch(0.13 0.04 260));
 }
 
-.dark {
-  /* same palette — app is dark by default */
-  --background: oklch(0.16 0.04 260);
-}
-
 @layer base {
   * { border-color: var(--color-border); }
+  html {
+    color-scheme: light;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+  html.dark { color-scheme: dark; }
   html, body { background-color: var(--color-background); color: var(--color-foreground); }
   body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
   ::selection { background: oklch(0.72 0.16 215 / 0.35); }
+
+  /* Hide scrollbar for tab list on mobile */
+  .scrollbar-none::-webkit-scrollbar { display: none; }
+  .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Slim sidebar scrollbar */
+  .sidebar-scroll::-webkit-scrollbar { width: 4px; }
+  .sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+  .sidebar-scroll::-webkit-scrollbar-thumb { background: var(--sidebar-border); border-radius: 4px; }
+  .sidebar-scroll::-webkit-scrollbar-thumb:hover { background: var(--color-primary); }
 }
 
 @utility gradient-hero {
@@ -118,4 +176,44 @@
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+}
+
+/* ── Portal / Captive Portal utilities ────────────────────────── */
+@layer base {
+  /* Smooth brand color transitions when branding is applied */
+  :root {
+    transition: --primary 0.3s ease, --secondary 0.3s ease, --accent 0.3s ease;
+  }
+
+  /* Premium card hover lift */
+  .card-hover {
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .card-hover:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-glow);
+  }
+
+  /* Portal dark glass */
+  .portal-glass {
+    background: oklch(1 0 0 / 0.05);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid oklch(1 0 0 / 0.1);
+  }
+
+  /* Pulse ring for payment waiting */
+  @keyframes pulse-ring {
+    0% { box-shadow: 0 0 0 0 var(--color-primary, #0ea5e9); opacity: 0.7; }
+    70% { box-shadow: 0 0 0 12px transparent; opacity: 0; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  .pulse-ring {
+    animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+  }
+
+  /* Number input — remove spinners */
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
 }

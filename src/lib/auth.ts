@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Session, User } from "@supabase/supabase-js";
 
@@ -70,4 +71,21 @@ export async function fetchMyRoles(userId: string): Promise<AppRole[]> {
 
 export async function signOut() {
   await supabase.auth.signOut();
+}
+
+export function useTenantId() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["tenant-id", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("tenant_id")
+        .eq("id", user!.id)
+        .single();
+      return (data?.tenant_id ?? null) as string | null;
+    },
+    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
+  });
 }

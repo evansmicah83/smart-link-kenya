@@ -39,11 +39,12 @@ export function OnboardTenant({ userId }: { userId: string }) {
         .eq("id", userId);
       if (pErr) throw pErr;
 
-      // 3. grant isp_owner role
-      const { error: rErr } = await supabase
-        .from("user_roles")
-        .insert({ user_id: userId, tenant_id: tenant.id, role: "isp_owner" });
-      if (rErr) console.warn(rErr);
+      // 3. grant isp_owner role via security definer function
+      const { error: rErr } = await supabase.rpc("assign_isp_owner" as any, {
+        _user_id: userId,
+        _tenant_id: tenant.id,
+      });
+      if (rErr) throw rErr;
 
       // 4. create default branch
       if (city) {
@@ -56,9 +57,11 @@ export function OnboardTenant({ userId }: { userId: string }) {
       }
 
       toast.success("Workspace ready");
-      await qc.invalidateQueries();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create workspace");
+      await qc.invalidateQueries({ queryKey: ["profile", userId] });
+      await qc.refetchQueries({ queryKey: ["profile", userId] });
+    } catch (err: any) {
+      toast.error(err?.message ?? err?.details ?? "Failed to create workspace");
+      console.error("Workspace creation error:", err);
     } finally {
       setLoading(false);
     }

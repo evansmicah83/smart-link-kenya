@@ -1,0 +1,22 @@
+{
+  "name": "SmartLinkNet ISP Platform",
+  "short_name": "SmartLinkNet",
+  "description": "Enterprise ISP, Hotspot, Fiber, Billing & CRM for Kenya",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#1e3a8a",
+  "orientation": "portrait-primary",
+  "categories": ["business", "utilities"],
+  "lang": "en",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Dashboard", "url": "/dashboard" },
+    { "name": "Customers", "url": "/customers" },
+    { "name": "Billing", "url": "/billing" },
+    { "name": "Support", "url": "/support" }
+  ]
+}
