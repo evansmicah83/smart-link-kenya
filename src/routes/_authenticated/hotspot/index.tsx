@@ -131,9 +131,9 @@ function HotspotPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div><h1 className="text-2xl font-semibold">Hotspot</h1><p className="text-sm text-muted-foreground">Sessions, vouchers and hotspot management</p></div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={printVouchers}><Printer className="h-4 w-4 mr-2" />Print</Button>
           <Button variant="outline" onClick={exportCSV}><Download className="h-4 w-4 mr-2" />Export</Button>
           <Button onClick={() => setVOpen(true)}><Plus className="h-4 w-4 mr-2" />Generate Vouchers</Button>
@@ -148,7 +148,7 @@ function HotspotPage() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <TabsList>
             <TabsTrigger value="sessions">Live Sessions</TabsTrigger>
             <TabsTrigger value="vouchers">Vouchers ({(vouchers.data ?? []).length})</TabsTrigger>

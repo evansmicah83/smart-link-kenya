@@ -13,6 +13,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PortalIndexRouteImport } from './routes/portal/index'
+import { Route as MyAccountIndexRouteImport } from './routes/my-account/index'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
@@ -54,6 +55,11 @@ const IndexRoute = IndexRouteImport.update({
 const PortalIndexRoute = PortalIndexRouteImport.update({
   id: '/portal/',
   path: '/portal/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MyAccountIndexRoute = MyAccountIndexRouteImport.update({
+  id: '/my-account/',
+  path: '/my-account/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
@@ -193,6 +199,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/my-account/': typeof MyAccountIndexRoute
   '/portal/': typeof PortalIndexRoute
   '/aaa/': typeof AuthenticatedAaaIndexRoute
   '/automation/': typeof AuthenticatedAutomationIndexRoute
@@ -221,6 +228,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/my-account': typeof MyAccountIndexRoute
   '/portal': typeof PortalIndexRoute
   '/aaa': typeof AuthenticatedAaaIndexRoute
   '/automation': typeof AuthenticatedAutomationIndexRoute
@@ -251,6 +259,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/my-account/': typeof MyAccountIndexRoute
   '/portal/': typeof PortalIndexRoute
   '/_authenticated/aaa/': typeof AuthenticatedAaaIndexRoute
   '/_authenticated/automation/': typeof AuthenticatedAutomationIndexRoute
@@ -281,6 +290,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/admin'
     | '/dashboard'
+    | '/my-account/'
     | '/portal/'
     | '/aaa/'
     | '/automation/'
@@ -309,6 +319,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/admin'
     | '/dashboard'
+    | '/my-account'
     | '/portal'
     | '/aaa'
     | '/automation'
@@ -338,6 +349,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/_authenticated/admin'
     | '/_authenticated/dashboard'
+    | '/my-account/'
     | '/portal/'
     | '/_authenticated/aaa/'
     | '/_authenticated/automation/'
@@ -366,6 +378,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  MyAccountIndexRoute: typeof MyAccountIndexRoute
   PortalIndexRoute: typeof PortalIndexRoute
 }
 
@@ -397,6 +410,13 @@ declare module '@tanstack/react-router' {
       path: '/portal'
       fullPath: '/portal/'
       preLoaderRoute: typeof PortalIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/my-account/': {
+      id: '/my-account/'
+      path: '/my-account'
+      fullPath: '/my-account/'
+      preLoaderRoute: typeof MyAccountIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/dashboard': {
@@ -622,6 +642,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  MyAccountIndexRoute: MyAccountIndexRoute,
   PortalIndexRoute: PortalIndexRoute,
 }
 export const routeTree = rootRouteImport

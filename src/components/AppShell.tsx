@@ -242,7 +242,7 @@ function AppShellInner({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 px-4 py-6 pb-24 md:px-8 md:py-8 md:pb-8">
+        <main className="flex-1 min-w-0 overflow-x-hidden px-4 py-6 pb-24 md:px-8 md:py-8 md:pb-8">
           {profileQuery.isLoading || rolesQuery.isLoading || !user ? null
             : profileQuery.isError || profileQuery.data === undefined ? children
             : profileQuery.data !== null && !profileQuery.data.tenant_id && !isSuperAdmin && !hasTenantRole ? (

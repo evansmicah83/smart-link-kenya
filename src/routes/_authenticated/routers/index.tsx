@@ -140,12 +140,12 @@ function RoutersPage() {
           Your workspace is not set up yet. Please complete onboarding before adding routers.
         </div>
       )}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Routers</h1>
           <p className="text-sm text-muted-foreground">Network-agnostic device management — Phase 1</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => qc.invalidateQueries({ queryKey: ["routers"] })}>
             <RefreshCw className="h-4 w-4 mr-2" />Refresh
           </Button>

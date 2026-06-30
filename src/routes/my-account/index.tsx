@@ -51,7 +51,7 @@ function speedLabel(kbps: number) {
   return kbps >= 1024 ? `${(kbps / 1024).toFixed(0)} Mbps` : `${kbps} Kbps`;
 }
 
-export default function CustomerPortal() {
+function CustomerPortal() {
   const { token, isp } = useSearch({ from: "/my-account/" });
   const [tab, setTab] = useState<Tab>("overview");
   const [brand, setBrand] = useState<Brand>({});

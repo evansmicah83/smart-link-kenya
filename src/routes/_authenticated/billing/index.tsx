@@ -226,12 +226,12 @@ function BillingPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Billing</h1>
           <p className="text-sm text-muted-foreground">Payments, invoices, expenses and financial records</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => setExpenseOpen(true)}><TrendingDown className="h-4 w-4 mr-2" />Add Expense</Button>
           <Button variant="outline" onClick={() => setInvoiceOpen(true)}><FileText className="h-4 w-4 mr-2" />Create Invoice</Button>
           <Button onClick={() => { payForm.reset(); setPayOpen(true); }}><Plus className="h-4 w-4 mr-2" />Record Payment</Button>

@@ -8,6 +8,9 @@ export default defineConfig({
     preset: "vercel",
   },
   vite: {
+    resolve: {
+      tsconfigPaths: true,
+    },
     build: {
       chunkSizeWarningLimit: 1500,
     },

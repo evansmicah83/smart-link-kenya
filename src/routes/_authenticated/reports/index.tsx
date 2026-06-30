@@ -141,12 +141,12 @@ function ReportsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Reports & Analytics</h1>
           <p className="text-sm text-muted-foreground">Financial and operational insights</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Select value={period} onValueChange={setPeriod}>
             <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
             <SelectContent>
