@@ -4,7 +4,7 @@ import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
 import { toast } from "sonner";
-import { Wifi, Loader2 } from "lucide-react";
+import { Wifi, Loader2, ArrowLeft } from "lucide-react";
 
 const searchSchema = z.object({
   mode: z.enum(["signin", "signup"]).optional(),
@@ -33,8 +33,10 @@ function AuthPage() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
+  const plan = (Route.useSearch() as any)?.plan;
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -57,15 +59,27 @@ function AuthPage() {
           password,
           options: {
             emailRedirectTo: `${window.location.origin}/dashboard`,
-            data: { full_name: fullName, company_name: companyName },
+            data: { full_name: fullName, company_name: companyName, phone, plan },
           },
         });
         if (error) throw error;
+        // If user returned (signup succeeded), send OTP for phone verification and navigate to verify page
+        const userId = (data as any)?.user?.id;
+        if (userId) {
+          try {
+            await supabase.functions.invoke("signup-send-otp", {
+              body: { userId, email, phone },
+            });
+          } catch (e) {
+            console.warn("signup-send-otp failed:", e);
+          }
+        }
         if (data.session) {
           toast.success("Welcome to SmartLinkNet");
           navigate({ to: "/dashboard" });
         } else {
-          toast.success("Check your email to confirm your account.");
+          toast.success("Check your email to confirm your account. We also sent an SMS verification code.");
+          navigate({ to: "/verify" });
         }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -99,93 +113,118 @@ function AuthPage() {
   }
 
   return (
-    <div className="min-h-screen gradient-hero flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        <Link to="/" className="mb-8 flex items-center justify-center gap-2">
-          <div className="grid h-9 w-9 place-items-center rounded-md bg-primary text-primary-foreground">
-            <Wifi className="h-4 w-4" />
+    <div className="min-h-screen gradient-hero flex items-center justify-center px-4 py-8">
+      <div className="w-full max-w-4xl">
+        <div className="mb-6 flex items-center justify-between">
+          <Link to="/" className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-md bg-primary text-primary-foreground">
+              <Wifi className="h-5 w-5" />
+            </div>
+            <span className="text-lg font-semibold">SmartLink<span className="text-primary">Net</span></span>
+          </Link>
+          <div className="flex items-center gap-3">
+            <Link to="/" className="rounded-md px-3 py-2 text-sm hover:bg-accent inline-flex items-center gap-2">
+              <ArrowLeft className="h-4 w-4" /> Back
+            </Link>
           </div>
-          <span className="text-xl font-semibold">
-            SmartLink<span className="text-primary">Net</span>
-          </span>
-        </Link>
+        </div>
 
-        <div className="rounded-2xl border border-border/60 bg-card/80 p-8 backdrop-blur-xl">
-          <h1 className="text-2xl font-semibold">
-            {mode === "signin" ? "Welcome back" : "Create your account"}
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {mode === "signin"
-              ? "Sign in to your ISP dashboard"
-              : "Start your 14-day SmartLinkNet trial"}
-          </p>
-
-          <button
-            onClick={handleGoogle}
-            disabled={oauthLoading}
-            className="mt-6 flex w-full items-center justify-center gap-2 rounded-md border border-input bg-background/50 px-4 py-2.5 text-sm font-medium hover:bg-accent disabled:opacity-50"
-          >
-            {oauthLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <GoogleIcon />}
-            Continue with Google
-          </button>
-
-          <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
-            <div className="h-px flex-1 bg-border" />
-            <span>or with email</span>
-            <div className="h-px flex-1 bg-border" />
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === "signup" && (
-              <>
-                <Field label="Full name">
-                  <input
-                    required value={fullName} onChange={(e) => setFullName(e.target.value)}
-                    className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
-                    placeholder="Jane Wanjiru"
-                  />
-                </Field>
-                <Field label="Company / ISP name">
-                  <input
-                    required value={companyName} onChange={(e) => setCompanyName(e.target.value)}
-                    className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
-                    placeholder="SwiftNet Limited"
-                  />
-                </Field>
-              </>
+        <div className="grid gap-8 rounded-2xl border border-border/60 bg-card/80 p-6 shadow-lg md:grid-cols-2 md:p-0">
+          <div className="hidden flex-col gap-4 p-8 md:flex">
+            <div className="rounded-lg bg-primary/10 p-6">
+              <h2 className="text-2xl font-semibold">{mode === 'signup' ? 'Create your ISP account' : 'Welcome back'}</h2>
+              <p className="mt-2 text-sm text-muted-foreground">{mode === 'signup' ? 'Start your 14-day SmartLinkNet trial and configure M-Pesa, SMS and email.' : 'Sign in to your ISP dashboard'}</p>
+            </div>
+            {mode === 'signup' && (
+              <div className="mt-4 rounded-lg border border-border/60 bg-background/50 p-4">
+                <div className="text-sm text-muted-foreground">Selected plan</div>
+                <div className="mt-1 text-lg font-semibold">{plan ? plan.toString().toUpperCase() : 'Starter'}</div>
+                <div className="mt-2 text-sm text-muted-foreground">You can change this later in billing settings.</div>
+              </div>
             )}
-            <Field label="Email">
-              <input
-                type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
-                placeholder="Email"
-              />
-            </Field>
-            <Field label="Password">
-              <input
-                type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
-                placeholder="Password"
-              />
-            </Field>
-            <button
-              disabled={loading}
-              className="mt-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-            >
-              {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-              {mode === "signin" ? "Sign in" : "Create account"}
-            </button>
-          </form>
+            <div className="mt-auto text-xs text-muted-foreground">Trusted by Kenyan ISPs · M-Pesa ready · MikroTik integrations</div>
+          </div>
 
-          <p className="mt-6 text-center text-sm text-muted-foreground">
-            {mode === "signin" ? "No account yet? " : "Already have an account? "}
+          <div className="p-6 md:p-8">
+            <div className="space-y-3">
+              <h1 className="text-2xl font-semibold">{mode === "signin" ? "Welcome back" : "Create your account"}</h1>
+              <p className="text-sm text-muted-foreground">{mode === "signin" ? "Sign in to your ISP dashboard" : "Start your 14-day SmartLinkNet trial"}</p>
+            </div>
+
             <button
-              onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-              className="font-medium text-primary hover:underline"
+              onClick={handleGoogle}
+              disabled={oauthLoading}
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-md border border-input bg-background/50 px-4 py-2.5 text-sm font-medium hover:bg-accent disabled:opacity-50"
             >
-              {mode === "signin" ? "Create one" : "Sign in"}
+              {oauthLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <GoogleIcon />}
+              Continue with Google
             </button>
-          </p>
+
+            <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
+              <div className="h-px flex-1 bg-border" />
+              <span>or with email</span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {mode === "signup" && (
+                <>
+                  <Field label="Full name">
+                    <input
+                      required value={fullName} onChange={(e) => setFullName(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
+                      placeholder="Jane Wanjiru"
+                    />
+                  </Field>
+                  <Field label="Company / ISP name">
+                    <input
+                      required value={companyName} onChange={(e) => setCompanyName(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
+                      placeholder="SwiftNet Limited"
+                    />
+                  </Field>
+                  <Field label="Contact phone">
+                    <input
+                      required value={phone} onChange={(e) => setPhone(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
+                      placeholder="+254 712 345 678"
+                    />
+                  </Field>
+                </>
+              )}
+              <Field label="Email">
+                <input
+                  type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
+                  placeholder="Email"
+                />
+              </Field>
+              <Field label="Password">
+                <input
+                  type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
+                  placeholder="Password"
+                />
+              </Field>
+              <button
+                disabled={loading}
+                className="mt-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+                {mode === "signin" ? "Sign in" : "Create account"}
+              </button>
+            </form>
+
+            <p className="mt-6 text-center text-sm text-muted-foreground">
+              {mode === "signin" ? "No account yet? " : "Already have an account? "}
+              <button
+                onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
+                className="font-medium text-primary hover:underline"
+              >
+                {mode === "signin" ? "Create one" : "Sign in"}
+              </button>
+            </p>
+          </div>
         </div>
       </div>
     </div>

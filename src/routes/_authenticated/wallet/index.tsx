@@ -131,7 +131,7 @@ function WalletPage() {
 
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Wallet Balances */}
-        <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
+        <div className="rounded-xl border border-border/60 bg-card overflow-x-auto">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
             <h2 className="font-semibold text-sm">Customer Wallets</h2>
             <div className="relative">
@@ -139,7 +139,7 @@ function WalletPage() {
               <Input className="pl-8 h-8 text-xs w-48" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
           </div>
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[280px]">
             <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="px-4 py-2 text-left">Customer</th>
@@ -167,11 +167,11 @@ function WalletPage() {
         </div>
 
         {/* Recent Transactions */}
-        <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
+        <div className="rounded-xl border border-border/60 bg-card overflow-x-auto">
           <div className="px-4 py-3 border-b border-border/60">
             <h2 className="font-semibold text-sm">Recent Transactions</h2>
           </div>
-          <table className="w-full text-sm">
+          <table className="w-full text-sm min-w-[380px]">
             <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="px-4 py-2 text-left">Customer</th>

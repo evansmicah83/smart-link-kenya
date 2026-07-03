@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as VerifyRouteImport } from './routes/verify'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
@@ -23,6 +24,7 @@ import { Route as AuthenticatedSupportIndexRouteImport } from './routes/_authent
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated/settings/index'
 import { Route as AuthenticatedRoutersIndexRouteImport } from './routes/_authenticated/routers/index'
 import { Route as AuthenticatedReportsIndexRouteImport } from './routes/_authenticated/reports/index'
+import { Route as AuthenticatedQueueIndexRouteImport } from './routes/_authenticated/queue/index'
 import { Route as AuthenticatedProvisioningIndexRouteImport } from './routes/_authenticated/provisioning/index'
 import { Route as AuthenticatedPppoeIndexRouteImport } from './routes/_authenticated/pppoe/index'
 import { Route as AuthenticatedPortalManagerIndexRouteImport } from './routes/_authenticated/portal-manager/index'
@@ -38,6 +40,11 @@ import { Route as AuthenticatedBillingIndexRouteImport } from './routes/_authent
 import { Route as AuthenticatedAutomationIndexRouteImport } from './routes/_authenticated/automation/index'
 import { Route as AuthenticatedAaaIndexRouteImport } from './routes/_authenticated/aaa/index'
 
+const VerifyRoute = VerifyRouteImport.update({
+  id: '/verify',
+  path: '/verify',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
   path: '/auth',
@@ -114,6 +121,11 @@ const AuthenticatedReportsIndexRoute =
     path: '/reports/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedQueueIndexRoute = AuthenticatedQueueIndexRouteImport.update({
+  id: '/queue/',
+  path: '/queue/',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedProvisioningIndexRoute =
   AuthenticatedProvisioningIndexRouteImport.update({
     id: '/provisioning/',
@@ -197,6 +209,7 @@ const AuthenticatedAaaIndexRoute = AuthenticatedAaaIndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/verify': typeof VerifyRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/my-account/': typeof MyAccountIndexRoute
@@ -215,6 +228,7 @@ export interface FileRoutesByFullPath {
   '/portal-manager/': typeof AuthenticatedPortalManagerIndexRoute
   '/pppoe/': typeof AuthenticatedPppoeIndexRoute
   '/provisioning/': typeof AuthenticatedProvisioningIndexRoute
+  '/queue/': typeof AuthenticatedQueueIndexRoute
   '/reports/': typeof AuthenticatedReportsIndexRoute
   '/routers/': typeof AuthenticatedRoutersIndexRoute
   '/settings/': typeof AuthenticatedSettingsIndexRoute
@@ -226,6 +240,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/verify': typeof VerifyRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/my-account': typeof MyAccountIndexRoute
@@ -244,6 +259,7 @@ export interface FileRoutesByTo {
   '/portal-manager': typeof AuthenticatedPortalManagerIndexRoute
   '/pppoe': typeof AuthenticatedPppoeIndexRoute
   '/provisioning': typeof AuthenticatedProvisioningIndexRoute
+  '/queue': typeof AuthenticatedQueueIndexRoute
   '/reports': typeof AuthenticatedReportsIndexRoute
   '/routers': typeof AuthenticatedRoutersIndexRoute
   '/settings': typeof AuthenticatedSettingsIndexRoute
@@ -257,6 +273,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
+  '/verify': typeof VerifyRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/my-account/': typeof MyAccountIndexRoute
@@ -275,6 +292,7 @@ export interface FileRoutesById {
   '/_authenticated/portal-manager/': typeof AuthenticatedPortalManagerIndexRoute
   '/_authenticated/pppoe/': typeof AuthenticatedPppoeIndexRoute
   '/_authenticated/provisioning/': typeof AuthenticatedProvisioningIndexRoute
+  '/_authenticated/queue/': typeof AuthenticatedQueueIndexRoute
   '/_authenticated/reports/': typeof AuthenticatedReportsIndexRoute
   '/_authenticated/routers/': typeof AuthenticatedRoutersIndexRoute
   '/_authenticated/settings/': typeof AuthenticatedSettingsIndexRoute
@@ -288,6 +306,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/verify'
     | '/admin'
     | '/dashboard'
     | '/my-account/'
@@ -306,6 +325,7 @@ export interface FileRouteTypes {
     | '/portal-manager/'
     | '/pppoe/'
     | '/provisioning/'
+    | '/queue/'
     | '/reports/'
     | '/routers/'
     | '/settings/'
@@ -317,6 +337,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/auth'
+    | '/verify'
     | '/admin'
     | '/dashboard'
     | '/my-account'
@@ -335,6 +356,7 @@ export interface FileRouteTypes {
     | '/portal-manager'
     | '/pppoe'
     | '/provisioning'
+    | '/queue'
     | '/reports'
     | '/routers'
     | '/settings'
@@ -347,6 +369,7 @@ export interface FileRouteTypes {
     | '/'
     | '/_authenticated'
     | '/auth'
+    | '/verify'
     | '/_authenticated/admin'
     | '/_authenticated/dashboard'
     | '/my-account/'
@@ -365,6 +388,7 @@ export interface FileRouteTypes {
     | '/_authenticated/portal-manager/'
     | '/_authenticated/pppoe/'
     | '/_authenticated/provisioning/'
+    | '/_authenticated/queue/'
     | '/_authenticated/reports/'
     | '/_authenticated/routers/'
     | '/_authenticated/settings/'
@@ -378,12 +402,20 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  VerifyRoute: typeof VerifyRoute
   MyAccountIndexRoute: typeof MyAccountIndexRoute
   PortalIndexRoute: typeof PortalIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/verify': {
+      id: '/verify'
+      path: '/verify'
+      fullPath: '/verify'
+      preLoaderRoute: typeof VerifyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/auth': {
       id: '/auth'
       path: '/auth'
@@ -480,6 +512,13 @@ declare module '@tanstack/react-router' {
       path: '/reports'
       fullPath: '/reports/'
       preLoaderRoute: typeof AuthenticatedReportsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/queue/': {
+      id: '/_authenticated/queue/'
+      path: '/queue'
+      fullPath: '/queue/'
+      preLoaderRoute: typeof AuthenticatedQueueIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/provisioning/': {
@@ -600,6 +639,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedPortalManagerIndexRoute: typeof AuthenticatedPortalManagerIndexRoute
   AuthenticatedPppoeIndexRoute: typeof AuthenticatedPppoeIndexRoute
   AuthenticatedProvisioningIndexRoute: typeof AuthenticatedProvisioningIndexRoute
+  AuthenticatedQueueIndexRoute: typeof AuthenticatedQueueIndexRoute
   AuthenticatedReportsIndexRoute: typeof AuthenticatedReportsIndexRoute
   AuthenticatedRoutersIndexRoute: typeof AuthenticatedRoutersIndexRoute
   AuthenticatedSettingsIndexRoute: typeof AuthenticatedSettingsIndexRoute
@@ -626,6 +666,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedPortalManagerIndexRoute: AuthenticatedPortalManagerIndexRoute,
   AuthenticatedPppoeIndexRoute: AuthenticatedPppoeIndexRoute,
   AuthenticatedProvisioningIndexRoute: AuthenticatedProvisioningIndexRoute,
+  AuthenticatedQueueIndexRoute: AuthenticatedQueueIndexRoute,
   AuthenticatedReportsIndexRoute: AuthenticatedReportsIndexRoute,
   AuthenticatedRoutersIndexRoute: AuthenticatedRoutersIndexRoute,
   AuthenticatedSettingsIndexRoute: AuthenticatedSettingsIndexRoute,
@@ -642,6 +683,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  VerifyRoute: VerifyRoute,
   MyAccountIndexRoute: MyAccountIndexRoute,
   PortalIndexRoute: PortalIndexRoute,
 }

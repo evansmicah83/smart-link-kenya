@@ -4,6 +4,7 @@
  *        notify_customer → create_audit_log
  */
 import { supabase } from "@/integrations/supabase/client";
+import { authService } from "@/lib/network";
 import type { StepDefinition } from "../types";
 
 const now = () => new Date().toISOString();
@@ -99,44 +100,34 @@ export function buildSubscriptionExpirySteps(): StepDefinition[] {
         if (!input["router_id"]) return { skipped: true, reason: "no_router" };
 
         const { data: sub } = await (supabase as any)
-          .from("subscriptions").select("username").eq("id", input["subscription_id"]).maybeSingle();
+          .from("subscriptions").select("username, type").eq("id", input["subscription_id"]).maybeSingle();
         if (!sub?.username) return { skipped: true, reason: "no_username" };
 
-        const { error } = await supabase.functions.invoke("router-command", {
-          body: {
-            routerId: input["router_id"],
-            command:  "suspend_user",
-            params:   { username: sub.username, subscriptionId: input["subscription_id"] },
-          },
-        });
-        if (error) throw new Error(`Router suspend failed: ${error.message}`);
-
-        await (supabase as any).from("radius_users").update({
-          is_active: false, updated_at: now(),
-        }).eq("tenant_id", input["tenant_id"]).eq("subscription_id", input["subscription_id"]);
-
-        await (supabase as any).from("provisioning_events").insert({
-          tenant_id:       input["tenant_id"],
-          subscription_id: input["subscription_id"],
-          router_id:       input["router_id"],
-          event:           "suspended",
-          username:        sub.username,
-        }).catch(() => {});
+        await authService.suspendSubscriptionFromRecord(
+          input["tenant_id"] as string,
+          {
+            id:        input["subscription_id"] as string,
+            router_id: input["router_id"] as string,
+            username:  sub.username,
+            type:      sub.type,
+          }
+        );
 
         return { suspended: true, username: sub.username };
       },
       async compensate(_input, output) {
         if (!output["skipped"] && _input["router_id"] && output["username"]) {
-          await supabase.functions.invoke("router-command", {
-            body: {
-              routerId: _input["router_id"],
-              command:  "activate_user",
-              params:   { username: output["username"] },
-            },
-          }).catch(() => {});
-          await (supabase as any).from("radius_users").update({
-            is_active: true, updated_at: now(),
-          }).eq("subscription_id", _input["subscription_id"]);
+          const { data: sub } = await (supabase as any)
+            .from("subscriptions").select("password, package_id, type, profile, pool_name").eq("id", _input["subscription_id"]).maybeSingle();
+          await authService.provisionSubscriptionFromRecord(
+            _input["tenant_id"] as string,
+            {
+              id:        _input["subscription_id"] as string,
+              router_id: _input["router_id"] as string,
+              username:  output["username"] as string,
+              ...sub,
+            }
+          ).catch(() => {});
         }
       },
     },

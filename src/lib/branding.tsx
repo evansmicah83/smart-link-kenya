@@ -27,30 +27,89 @@ export interface TenantBrand {
   css_overrides?: string | null;
   portal_bg_color?: string | null;
   portal_text_color?: string | null;
+  email_from_name?: string | null;
+  email_from_address?: string | null;
+  social_links?: Record<string, string> | string | null;
+  custom_domain?: string | null;
+  domain_verified?: boolean | null;
+  brand_config?: {
+    light_theme_colors?: Record<string, string>;
+    dark_theme_colors?: Record<string, string>;
+    typography?: Record<string, string>;
+    login_screen?: Record<string, string>;
+    dashboard_theme?: Record<string, string>;
+  } | null;
 }
 
 const BrandingCtx = createContext<TenantBrand>({});
 export const useBranding = () => useContext(BrandingCtx);
 
-function hexToOklch(hex: string): string {
-  // passthrough — CSS supports hex in custom properties directly
-  return hex;
+function normalizeBrandConfig(config: TenantBrand["brand_config"] | string | null | undefined) {
+  if (!config) return {};
+  if (typeof config === "string") {
+    try {
+      return JSON.parse(config);
+    } catch {
+      return {};
+    }
+  }
+  return config;
 }
 
-function applyColors(b: TenantBrand) {
-  const r = document.documentElement;
-  const set = (v: string | null | undefined, prop: string) => {
-    if (v) r.style.setProperty(prop, v);
-    else r.style.removeProperty(prop);
+export function buildBrandingCssProperties(b: TenantBrand) {
+  const theme = normalizeBrandConfig(b.brand_config);
+  const light = theme.light_theme_colors ?? {};
+  const dark = theme.dark_theme_colors ?? {};
+  const typography = theme.typography ?? {};
+  const loginScreen = theme.login_screen ?? {};
+  const dashboardTheme = theme.dashboard_theme ?? {};
+
+  const css: Record<string, string> = {};
+  const set = (value: string | null | undefined, prop: string) => {
+    if (value) css[prop] = value;
   };
+
   set(b.primary_color, "--primary");
   set(b.secondary_color, "--secondary");
   set(b.accent_color, "--accent");
   set(b.success_color, "--success");
   set(b.warning_color, "--warning");
   set(b.error_color, "--destructive");
-  // sidebar inherits primary
-  if (b.primary_color) r.style.setProperty("--sidebar-primary", b.primary_color);
+  if (b.primary_color) css["--sidebar-primary"] = b.primary_color;
+
+  set(light.primary, "--color-primary");
+  set(light.secondary, "--color-secondary");
+  set(light.accent, "--color-accent");
+  set(light.background, "--background");
+  set(light.card, "--card");
+  set(light.text, "--foreground");
+
+  set(dark.background, "--background-dark");
+  set(dark.card, "--card-dark");
+  set(dark.text, "--foreground-dark");
+  if (!css["--background"] && dark.background) css["--background"] = dark.background;
+  if (!css["--card"] && dark.card) css["--card"] = dark.card;
+  if (!css["--foreground"] && dark.text) css["--foreground"] = dark.text;
+
+  set(typography.font_family, "--font-sans");
+  set(typography.heading_font, "--font-heading");
+  set(typography.body_font, "--font-body");
+
+  set(loginScreen.background, "--login-bg");
+  set(loginScreen.card, "--login-card");
+  set(loginScreen.text, "--login-text");
+
+  set(dashboardTheme.background, "--dashboard-background");
+  set(dashboardTheme.card, "--dashboard-card");
+  set(dashboardTheme.text, "--dashboard-text");
+
+  return css;
+}
+
+function applyColors(b: TenantBrand) {
+  const r = document.documentElement;
+  const css = buildBrandingCssProperties(b);
+  Object.entries(css).forEach(([prop, value]) => r.style.setProperty(prop, value));
 
   // inject optional CSS overrides
   let style = document.getElementById("tenant-css-overrides") as HTMLStyleElement | null;

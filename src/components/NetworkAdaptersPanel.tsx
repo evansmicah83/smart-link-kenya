@@ -9,7 +9,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/lib/auth";
+import { useAuth, useTenantId } from "@/lib/auth";
 import { toast } from "sonner";
 import { adapterFactory } from "@/lib/network";
 import type { AdapterType, NetworkFeature } from "@/lib/network";
@@ -39,18 +39,6 @@ const ALL_FEATURES: NetworkFeature[] = [
   "hotspot", "pppoe", "dhcp", "ipv4", "ipv6",
   "cgnat", "multi_wan", "vlan", "qos", "radius_auth", "user_manager",
 ];
-
-function useTenantId() {
-  const { user } = useAuth();
-  return useQuery({
-    queryKey: ["tenant-id", user?.id],
-    queryFn: async () => {
-      const { data } = await supabase.from("profiles").select("tenant_id").eq("id", user!.id).single();
-      return (data?.tenant_id as string) ?? null;
-    },
-    enabled: !!user,
-  });
-}
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 

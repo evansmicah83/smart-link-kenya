@@ -16,42 +16,92 @@ import { toast } from "sonner";
 
 type NavItem = { to: string; label: string; icon: React.ComponentType<{ className?: string }>; roles?: AppRole[] };
 
-const NAV: NavItem[] = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/admin", label: "Tenants", icon: ShieldCheck, roles: ["super_admin"] },
-  { to: "/customers", label: "Customers", icon: Users },
-  { to: "/packages", label: "Plans", icon: Package },
-  { to: "/routers", label: "Routers", icon: RouterIcon },
-  { to: "/aaa", label: "Net Auth", icon: Server },
-  { to: "/hotspot", label: "Hotspot", icon: Wifi },
-  { to: "/vouchers", label: "Vouchers", icon: QrCode },
-  { to: "/pppoe", label: "PPPoE", icon: Network },
-  { to: "/noc", label: "Monitoring", icon: Activity },
-  { to: "/fiber", label: "Fiber Lines", icon: Cable },
-  { to: "/billing", label: "Billing", icon: Receipt },
-  { to: "/wallet", label: "Wallet", icon: Wallet },
-  { to: "/inventory", label: "Inventory", icon: Boxes },
-  { to: "/support", label: "Support", icon: Ticket },
-  { to: "/technicians", label: "Field Team", icon: Wrench },
-  { to: "/map", label: "Coverage", icon: Map },
-  { to: "/reports", label: "Reports", icon: BarChart3 },
-  { to: "/automation", label: "Automation", icon: Zap },
-  { to: "/provisioning", label: "Provisioning", icon: Layers },
-  { to: "/marketing", label: "Marketing", icon: Megaphone },
-  { to: "/portal-manager", label: "Captive Portal", icon: Globe },
-  { to: "/settings", label: "Settings", icon: Settings },
+type NavGroup = { key: string; title: string; icon: React.ComponentType<{ className?: string }>; items: NavItem[] };
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    key: "core",
+    title: "Core",
+    icon: LayoutDashboard,
+    items: [
+      { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { to: "/customers", label: "Customers", icon: Users },
+    ],
+  },
+  {
+    key: "network",
+    title: "Network",
+    icon: Wifi,
+    items: [
+      { to: "/routers", label: "Routers", icon: RouterIcon },
+      { to: "/aaa", label: "Net Auth", icon: Server },
+      { to: "/hotspot", label: "Hotspot", icon: Wifi },
+      { to: "/pppoe", label: "PPPoE", icon: Network },
+      { to: "/fiber", label: "Fiber Lines", icon: Cable },
+      { to: "/vouchers", label: "Vouchers", icon: QrCode },
+    ],
+  },
+  {
+    key: "provisioning",
+    title: "Provisioning",
+    icon: Layers,
+    items: [
+      { to: "/provisioning", label: "Provisioning", icon: Layers },
+      { to: "/automation", label: "Automation", icon: Zap },
+    ],
+  },
+  {
+    key: "operations",
+    title: "Operations",
+    icon: Activity,
+    items: [
+      { to: "/noc", label: "Monitoring", icon: Activity },
+      { to: "/map", label: "Coverage", icon: Map },
+    ],
+  },
+  {
+    key: "billing",
+    title: "Billing & Payments",
+    icon: Receipt,
+    items: [
+      { to: "/billing", label: "Billing", icon: Receipt },
+      { to: "/wallet", label: "Wallet", icon: Wallet },
+      { to: "/packages", label: "Plans", icon: Package },
+    ],
+  },
+  {
+    key: "business",
+    title: "Business",
+    icon: Boxes,
+    items: [
+      { to: "/inventory", label: "Inventory", icon: Boxes },
+      { to: "/reports", label: "Reports", icon: BarChart3 },
+      { to: "/marketing", label: "Marketing", icon: Megaphone },
+    ],
+  },
+  {
+    key: "team",
+    title: "Team",
+    icon: Wrench,
+    items: [
+      { to: "/technicians", label: "Field Team", icon: Wrench },
+      { to: "/support", label: "Support", icon: Ticket },
+      { to: "/portal-manager", label: "Captive Portal", icon: Globe },
+    ],
+  },
+  {
+    key: "platform",
+    title: "Platform",
+    icon: ShieldCheck,
+    items: [
+      { to: "/admin", label: "Tenants", icon: ShieldCheck, roles: ["super_admin"] },
+      { to: "/settings", label: "Settings", icon: Settings },
+    ],
+  },
 ];
 
 // Bottom tab bar — 4 primary items always visible
 const BOTTOM_TABS = ["/dashboard", "/customers", "/billing", "/settings"];
-
-// "More" sheet groups
-const MORE_GROUPS: { title: string; items: string[] }[] = [
-  { title: "Network", items: ["/routers", "/aaa", "/hotspot", "/pppoe", "/fiber", "/vouchers"] },
-  { title: "Operations", items: ["/noc", "/monitoring", "/automation", "/provisioning", "/map"] },
-  { title: "Business", items: ["/packages", "/wallet", "/inventory", "/reports", "/marketing"] },
-  { title: "Team", items: ["/technicians", "/support", "/portal-manager", "/admin"] },
-];
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
@@ -124,8 +174,9 @@ function AppShellInner({ children }: { children: ReactNode }) {
   const roles = rolesQuery.data ?? [];
   const isSuperAdmin = roles.includes("super_admin");
   const hasTenantRole = roles.some((r) => r !== "super_admin");
-  const visibleNav = NAV.filter((n) => !n.roles || n.roles.some((r) => roles.includes(r)));
-  const bottomTabs = visibleNav.filter((n) => BOTTOM_TABS.includes(n.to));
+  const visibleGroups = NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((n) => !n.roles || n.roles.some((r) => roles.includes(r))) })).filter((g) => g.items.length > 0);
+  const flatVisible = visibleGroups.flatMap((g) => g.items);
+  const bottomTabs = flatVisible.filter((n) => BOTTOM_TABS.includes(n.to));
 
   async function handleSignOut() {
     await signOut();
@@ -154,25 +205,35 @@ function AppShellInner({ children }: { children: ReactNode }) {
           </Link>
         </div>
 
-        <nav className="sidebar-scroll flex-1 overflow-y-auto space-y-0.5 px-3 py-4">
-          {visibleNav.map((item) => {
-            const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
-            return (
-              <Link
-                key={item.to}
-                to={item.to as never}
-                className={`group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-all ${
-                  active
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
-                }`}
-              >
-                <item.icon className={`h-4 w-4 shrink-0 ${active ? "text-primary" : "text-muted-foreground group-hover:text-foreground"}`} />
-                <span className="truncate">{item.label}</span>
-                {active && <div className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />}
-              </Link>
-            );
-          })}
+        <nav className="sidebar-scroll flex-1 overflow-y-auto space-y-2 px-3 py-4">
+          {visibleGroups.map((group) => (
+            <div key={group.key} className="mb-2">
+              <div className="mb-1 flex items-center gap-2 px-2 text-xs uppercase text-muted-foreground">
+                <group.icon className="h-3.5 w-3.5" />
+                <span>{group.title}</span>
+              </div>
+              <div className="space-y-0.5">
+                {group.items.map((item) => {
+                  const active = pathname === item.to || (item.to !== "/dashboard" && pathname.startsWith(item.to));
+                  return (
+                    <Link
+                      key={item.to}
+                      to={item.to as never}
+                      className={`group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-all ${
+                        active
+                          ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                          : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+                      }`}
+                    >
+                      <item.icon className={`h-4 w-4 shrink-0 ${active ? "text-primary" : "text-muted-foreground group-hover:text-foreground"}`} />
+                      <span className="truncate">{item.label}</span>
+                      {active && <div className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
         <div className="shrink-0 border-t border-sidebar-border p-3">
@@ -199,7 +260,7 @@ function AppShellInner({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Main */}
-      <div className="flex flex-1 flex-col md:pl-64">
+      <div className="flex flex-1 flex-col md:pl-64 min-w-0 w-0">
         {/* Outage banner */}
         {(outages.data ?? []).length > 0 && (
           <div className="flex items-center gap-3 bg-destructive/90 px-4 py-2 text-xs text-white">
@@ -230,7 +291,7 @@ function AppShellInner({ children }: { children: ReactNode }) {
             <NotificationsBell tenantId={profileQuery.data?.tenant_id ?? null} userId={user?.id ?? null} />
             <button
               onClick={toggleDark}
-              className="relative flex h-8 w-13 items-center rounded-full border border-border bg-muted px-1 transition-colors hover:border-primary"
+              className="relative flex h-8 w-14 items-center rounded-full border border-border bg-muted px-1 transition-colors hover:border-primary"
               aria-label="Toggle theme"
             >
               <span className={`absolute flex h-6 w-6 items-center justify-center rounded-full bg-background shadow-sm transition-all duration-300 ${darkMode ? "translate-x-6" : "translate-x-0"}`}>
@@ -242,7 +303,7 @@ function AppShellInner({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 min-w-0 overflow-x-hidden px-4 py-6 pb-24 md:px-8 md:py-8 md:pb-8">
+        <main className="flex-1 min-w-0 overflow-hidden px-4 py-4 pb-24 md:px-8 md:py-8 md:pb-8">
           {profileQuery.isLoading || rolesQuery.isLoading || !user ? null
             : profileQuery.isError || profileQuery.data === undefined ? children
             : profileQuery.data !== null && !profileQuery.data.tenant_id && !isSuperAdmin && !hasTenantRole ? (
@@ -269,7 +330,7 @@ function AppShellInner({ children }: { children: ReactNode }) {
           );
         })}
         {/* More button */}
-        <MobileMoreSheet visibleNav={visibleNav} pathname={pathname} roles={roles} onSignOut={handleSignOut} profile={profileQuery.data ?? null} email={user?.email ?? null} />
+        <MobileMoreSheet visibleGroups={visibleGroups} flatVisible={flatVisible} pathname={pathname} roles={roles} onSignOut={handleSignOut} profile={profileQuery.data ?? null} email={user?.email ?? null} />
       </nav>
     </div>
   );
@@ -379,13 +440,13 @@ function UserMenu({ profile, email, onSignOut }: { profile: Profile | null; emai
 }
 
 function MobileMoreSheet({
-  visibleNav, pathname, roles, onSignOut, profile, email,
+  visibleGroups, flatVisible, pathname, roles, onSignOut, profile, email,
 }: {
-  visibleNav: NavItem[]; pathname: string; roles: AppRole[];
+  visibleGroups: NavGroup[]; flatVisible: NavItem[]; pathname: string; roles: AppRole[];
   onSignOut: () => void; profile: Profile | null; email: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const navMap = Object.fromEntries(visibleNav.map((n) => [n.to, n]));
+  const navMap = Object.fromEntries(flatVisible.map((n) => [n.to, n]));
   const name = profile?.full_name ?? email ?? "Account";
   const initials = (name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
   const isMoreActive = !["/dashboard", "/customers", "/billing", "/settings"].some(
@@ -405,7 +466,7 @@ function MobileMoreSheet({
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-[60] flex flex-col justify-end">
+        <div className="fixed inset-0 z-60 flex flex-col justify-end">
           {/* backdrop */}
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)} />
 
@@ -426,8 +487,8 @@ function MobileMoreSheet({
 
             {/* grouped nav */}
             <div className="max-h-[60vh] overflow-y-auto px-4 py-3 space-y-4">
-              {MORE_GROUPS.map((group) => {
-                const items = group.items.map((to) => navMap[to]).filter(Boolean);
+              {visibleGroups.map((group) => {
+                const items = group.items;
                 if (!items.length) return null;
                 return (
                   <div key={group.title}>

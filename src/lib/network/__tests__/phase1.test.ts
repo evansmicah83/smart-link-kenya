@@ -312,7 +312,7 @@ describe("MikrotikRestAdapter.addUser()", () => {
     const [, init] = mockFetch.mock.calls[0];
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body.name).toBe("testuser");
-    expect(body.password).toBe("pass123");
+    expect(body.password).toBe("test-pass-fixture");
     expect(body["rate-limit"]).toBe("2M/1M");
     // Body must not contain raw IP addresses
     expect(JSON.stringify(body)).not.toMatch(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);

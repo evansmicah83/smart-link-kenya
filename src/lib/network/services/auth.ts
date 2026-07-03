@@ -8,6 +8,7 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { adapterFactory } from "../adapters/factory";
+import { recordProvisioningEvent } from "./telemetry";
 import type {
   RouterRef,
   CustomerRef,
@@ -75,16 +76,14 @@ export class AuthService {
     const adapter = await adapterFactory.getAuthAdapter(routerRef);
     await adapter.provisionCredentials(routerRef, creds);
 
-    // Record provisioning event
-    await (supabase as any).from("provisioning_events").insert({
-      tenant_id: tenantRef,
-      subscription_id: subscriptionRef,
-      router_id: routerRef,
+    await recordProvisioningEvent({
+      tenantRef,
+      subscriptionRef,
+      routerRef,
       event: "provisioned",
       username: credentials.username,
-      service_type: credentials.serviceType,
-      created_at: new Date().toISOString(),
-    }).catch(() => {});  // non-blocking
+      serviceType: credentials.serviceType,
+    });
   }
 
   /**
@@ -101,15 +100,14 @@ export class AuthService {
     const adapter = await adapterFactory.getAuthAdapter(routerRef);
     await adapter.deprovisionCredentials(routerRef, username);
 
-    await (supabase as any).from("provisioning_events").insert({
-      tenant_id: tenantRef,
-      subscription_id: subscriptionRef,
-      router_id: routerRef,
+    await recordProvisioningEvent({
+      tenantRef,
+      subscriptionRef,
+      routerRef,
       event: "suspended",
       username,
-      service_type: serviceType,
-      created_at: new Date().toISOString(),
-    }).catch(() => {});
+      serviceType,
+    });
   }
 
   /**
@@ -144,15 +142,14 @@ export class AuthService {
     const adapter = await adapterFactory.getAuthAdapter(routerRef);
     await adapter.provisionCredentials(routerRef, creds);
 
-    await (supabase as any).from("provisioning_events").insert({
-      tenant_id: tenantRef,
-      subscription_id: subscriptionRef,
-      router_id: routerRef,
+    await recordProvisioningEvent({
+      tenantRef,
+      subscriptionRef,
+      routerRef,
       event: "reactivated",
       username,
-      service_type: serviceType,
-      created_at: new Date().toISOString(),
-    }).catch(() => {});
+      serviceType,
+    });
   }
 
   /**
@@ -176,6 +173,78 @@ export class AuthService {
   async verifySubscriber(routerRef: RouterRef, username: string): Promise<boolean> {
     const adapter = await adapterFactory.getAuthAdapter(routerRef);
     return adapter.verifyCredentials(routerRef, username);
+  }
+
+  /**
+   * Provision a subscription record directly from the database payload.
+   * Used by UI flows that create/update subscriptions without manually constructing credentials.
+   */
+  async provisionSubscriptionFromRecord(
+    tenantRef: TenantRef,
+    subscription: {
+      id: string;
+      router_id?: string | null;
+      username: string;
+      password?: string | null;
+      package_id?: string | null;
+      type?: string | null;
+      profile?: string | null;
+      pool_name?: string | null;
+    }
+  ): Promise<void> {
+    if (!subscription.router_id) return;
+
+    const bandwidthPolicy = subscription.package_id ? await resolveBandwidthPolicy(subscription.package_id) : null;
+    const creds: NetworkCredentials = {
+      username: subscription.username,
+      password: subscription.password ?? subscription.username,
+      profile: subscription.profile ?? null,
+      serviceType: (subscription.type as ServiceType) ?? "pppoe",
+      rateLimit: bandwidthPolicy,
+      poolName: subscription.pool_name ?? null,
+      vlanId: null,
+      sessionTimeout: null,
+      idleTimeout: null,
+    };
+
+    const adapter = await adapterFactory.getAuthAdapter(subscription.router_id);
+    await adapter.provisionCredentials(subscription.router_id, creds);
+
+    await recordProvisioningEvent({
+      tenantRef,
+      subscriptionRef: subscription.id,
+      routerRef: subscription.router_id,
+      event: "provisioned",
+      username: subscription.username,
+      serviceType: (subscription.type as ServiceType) ?? "pppoe",
+    });
+  }
+
+  /**
+   * Suspend a subscription record directly from the database payload.
+   */
+  async suspendSubscriptionFromRecord(
+    tenantRef: TenantRef,
+    subscription: {
+      id: string;
+      router_id?: string | null;
+      username: string;
+      type?: string | null;
+    }
+  ): Promise<void> {
+    if (!subscription.router_id) return;
+
+    const adapter = await adapterFactory.getAuthAdapter(subscription.router_id);
+    await adapter.deprovisionCredentials(subscription.router_id, subscription.username);
+
+    await recordProvisioningEvent({
+      tenantRef,
+      subscriptionRef: subscription.id,
+      routerRef: subscription.router_id,
+      event: "suspended",
+      username: subscription.username,
+      serviceType: (subscription.type as ServiceType) ?? "pppoe",
+    });
   }
 }
 

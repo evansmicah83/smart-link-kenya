@@ -17,6 +17,7 @@ export default defineConfig({
     include: [
       "src/lib/aaa2/__tests__/**/*.test.ts",
       "src/lib/provisioning3/__tests__/**/*.test.ts",
+      "src/lib/network/__tests__/**/*.test.ts",
     ],
     setupFiles: [
       "src/lib/aaa2/__tests__/setup.ts",

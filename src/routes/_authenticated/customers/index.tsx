@@ -157,62 +157,64 @@ function CustomersPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="space-y-4 w-full">
+      <div className="flex items-start justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-semibold">Customers</h1>
-          <p className="text-sm text-muted-foreground">Manage your customer base and CRM</p>
+          <h1 className="text-xl font-semibold">Customers</h1>
+          <p className="text-xs text-muted-foreground">Manage your customer base and CRM</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={exportCSV}><Download className="h-4 w-4 mr-2" />Export CSV</Button>
-          <Button onClick={() => { setEditing(null); reset(); setOpen(true); }}><Plus className="h-4 w-4 mr-2" />Add Customer</Button>
+        <div className="flex gap-2 shrink-0">
+          <Button variant="outline" size="sm" onClick={exportCSV} className="px-2"><Download className="h-4 w-4" /></Button>
+          <Button size="sm" onClick={() => { setEditing(null); reset(); setOpen(true); }}><Plus className="h-4 w-4 mr-1" />Add</Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-3">
         {[
           { label: "Total", value: stats.total },
           { label: "Active", value: stats.active, color: "text-green-500" },
           { label: "Suspended", value: stats.suspended, color: "text-yellow-500" },
           { label: "Prospects", value: stats.prospects, color: "text-blue-500" },
         ].map((s) => (
-          <div key={s.label} className="rounded-xl border border-border/60 bg-card p-4">
+          <div key={s.label} className="rounded-xl border border-border/60 bg-card p-3">
             <div className="text-xs text-muted-foreground uppercase">{s.label}</div>
-            <div className={`text-2xl font-bold mt-1 ${s.color ?? ""}`}>{s.value}</div>
+            <div className={`text-xl font-bold mt-1 ${s.color ?? ""}`}>{s.value}</div>
           </div>
         ))}
       </div>
 
-      <div className="flex flex-wrap gap-3">
-        <div className="relative flex-1 min-w-[200px]">
+      <div className="space-y-2">
+        <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input className="pl-9" placeholder="Search name, phone, email, ID..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input className="pl-9 w-full" placeholder="Search name, phone, email, ID..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="active">Active</SelectItem>
-            <SelectItem value="suspended">Suspended</SelectItem>
-            <SelectItem value="disconnected">Disconnected</SelectItem>
-            <SelectItem value="prospect">Prospect</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Categories</SelectItem>
-            <SelectItem value="residential">Residential</SelectItem>
-            <SelectItem value="business">Business</SelectItem>
-            <SelectItem value="hotel">Hotel</SelectItem>
-            <SelectItem value="school">School</SelectItem>
-            <SelectItem value="estate">Estate</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="grid grid-cols-2 gap-2">
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="suspended">Suspended</SelectItem>
+              <SelectItem value="disconnected">Disconnected</SelectItem>
+              <SelectItem value="prospect">Prospect</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              <SelectItem value="residential">Residential</SelectItem>
+              <SelectItem value="business">Business</SelectItem>
+              <SelectItem value="hotel">Hotel</SelectItem>
+              <SelectItem value="school">School</SelectItem>
+              <SelectItem value="estate">Estate</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      <div className="rounded-xl border border-border/60 bg-card overflow-x-auto">
-        <table className="w-full text-sm">
+      <div className="rounded-xl border border-border/60 bg-card overflow-x-auto w-full">
+        <table className="w-full text-sm min-w-[600px]">
           <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
             <tr>
               <th className="px-4 py-3 text-left">Customer</th>

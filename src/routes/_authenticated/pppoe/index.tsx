@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { authService } from "@/lib/network";
 
 export const Route = createFileRoute("/_authenticated/pppoe/")({
   component: PPPoEPage,
@@ -88,15 +89,33 @@ function PPPoEPage() {
 
   const save = useMutation({
     mutationFn: async (data: FormData) => {
+      let saved: any = null;
       if (editing) {
-        const { error } = await supabase.from("subscriptions").update(data).eq("id", editing.id);
+        const { data: updated, error } = await supabase.from("subscriptions").update(data).eq("id", editing.id).select().single();
         if (error) throw error;
+        saved = updated;
       } else {
-        const { error } = await supabase.from("subscriptions").insert({
+        const { data: inserted, error } = await supabase.from("subscriptions").insert({
           ...data, tenant_id: tenantId, type: "pppoe", status: "active", starts_at: new Date().toISOString(),
-        });
+        }).select().single();
         if (error) throw error;
+        saved = inserted;
       }
+
+      if (saved?.router_id) {
+        await authService.provisionSubscriptionFromRecord(tenantId!, {
+          id: saved.id,
+          router_id: saved.router_id,
+          username: saved.username,
+          password: saved.password,
+          package_id: saved.package_id,
+          type: "pppoe",
+          profile: (data as any).profile ?? null,
+          pool_name: data.ip_address ?? null,
+        });
+      }
+
+      return saved;
     },
     onSuccess: () => {
       toast.success(editing ? "PPPoE user updated" : "PPPoE user created");
@@ -108,8 +127,31 @@ function PPPoEPage() {
 
   const toggleStatus = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      const { error } = await supabase.from("subscriptions").update({ status }).eq("id", id);
+      const { data: subscription, error } = await supabase.from("subscriptions").select("id, router_id, username, package_id, password").eq("id", id).single();
       if (error) throw error;
+
+      const { error: updateError } = await supabase.from("subscriptions").update({ status }).eq("id", id);
+      if (updateError) throw updateError;
+
+      if (status === "suspended" && subscription?.router_id) {
+        await authService.suspendSubscriptionFromRecord(tenantId!, {
+          id: subscription.id,
+          router_id: subscription.router_id,
+          username: subscription.username,
+          type: "pppoe",
+        });
+      } else if (status === "active" && subscription?.router_id) {
+        await authService.provisionSubscriptionFromRecord(tenantId!, {
+          id: subscription.id,
+          router_id: subscription.router_id,
+          username: subscription.username,
+          password: subscription.password,
+          package_id: subscription.package_id,
+          type: "pppoe",
+        });
+      }
+
+      return subscription;
     },
     onSuccess: () => { toast.success("Status updated"); qc.invalidateQueries({ queryKey: ["pppoe-subs"] }); },
     onError: (e: any) => toast.error(e.message),
@@ -172,8 +214,8 @@ function PPPoEPage() {
         </Button>
       </div>
 
-      <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="rounded-xl border border-border/60 bg-card overflow-x-auto">
+        <table className="w-full text-sm min-w-[600px]">
           <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
             <tr>
               <th className="px-4 py-3 text-left">Customer</th>

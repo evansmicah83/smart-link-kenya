@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useAuth } from "@/lib/auth";
+import { useAuth, useTenantId } from "@/lib/auth";
 import { supabase } from "@/integrations/supabase/client";
 import {
   workflowEngine, eventStore, auditTrail, recoveryService,
@@ -22,19 +22,6 @@ import {
 export const Route = createFileRoute("/_authenticated/provisioning/")({
   component: ProvisioningPage,
 });
-
-function useTenantId() {
-  const { user } = useAuth();
-  return useQuery({
-    queryKey: ["profile", user?.id],
-    queryFn: async () => {
-      if (!user) return null;
-      const { data } = await supabase.from("profiles").select("tenant_id").eq("id", user.id).single();
-      return (data?.tenant_id ?? null) as string | null;
-    },
-    enabled: !!user,
-  });
-}
 
 function StatCard({ icon: Icon, label, value, color }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -299,8 +286,8 @@ function ProvisioningPage() {
             </Select>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-xl border border-border/60 bg-card">
+            <table className="w-full text-sm min-w-[600px]">
               <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="px-4 py-3 text-left">Type</th>
@@ -375,8 +362,8 @@ function ProvisioningPage() {
               className="max-w-xs"
             />
           </div>
-          <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-xl border border-border/60 bg-card">
+            <table className="w-full text-sm min-w-[500px]">
               <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="px-4 py-3 text-left">Action</th>

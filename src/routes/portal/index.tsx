@@ -24,7 +24,7 @@ export const Route = createFileRoute("/portal/")({
   head: () => ({ meta: [{ title: "Connect to WiFi" }] }),
 });
 
-type Page = "landing" | "login" | "packages" | "payment" | "success" | "error";
+type Page = "landing" | "login" | "packages" | "payment" | "success" | "error" | "terms" | "support";
 type LoginMode = "voucher" | "phone" | "otp";
 
 interface Brand {
@@ -50,7 +50,7 @@ interface Package {
 }
 
 function CaptivePortal() {
-  const { isp, mac, ip, url } = useSearch({ from: "/portal" });
+  const { isp, mac, ip, url } = useSearch({ from: "/portal/" });
   const [page, setPage] = useState<Page>("landing");
   const [brand, setBrand] = useState<Brand>({});
   const [tenantId, setTenantId] = useState<string | null>(null);
@@ -196,10 +196,11 @@ function CaptivePortal() {
   }
 
   const primary = brand.primary_color ?? "var(--primary)";
+  const featuredPackages = packages.filter((pkg) => pkg.is_popular || pkg.price <= 500);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center px-4 py-8">
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-md">
         {/* Brand header */}
         <div className="text-center mb-6">
           {brand.logo_url ? (
@@ -222,10 +223,30 @@ function CaptivePortal() {
           {page === "landing" && (
             <div className="p-6 space-y-4">
               <h1 className="text-lg font-bold text-white text-center">Get Connected</h1>
-              <p className="text-sm text-slate-400 text-center">Choose how you want to connect to the internet</p>
+              <p className="text-sm text-slate-400 text-center">Fast, reliable internet for homes, apartments, hotels, schools, and events.</p>
               <div className="space-y-2">
-                <PortalBtn icon={PhoneCall} label="Buy with M-Pesa" sub="STK push to your phone" onClick={() => { setLoginMode("phone"); setPage("packages"); }} primary />
-                <PortalBtn icon={QrCode} label="Enter Voucher Code" sub="Already have a code?" onClick={() => { setLoginMode("voucher"); setPage("login"); }} />
+                <PortalBtn icon={PhoneCall} label="Buy with M-Pesa" sub="Instant STK push and activation" onClick={() => { setLoginMode("phone"); setPage("packages"); }} primary />
+                <PortalBtn icon={QrCode} label="Enter Voucher Code" sub="Activate with a prepaid code" onClick={() => { setLoginMode("voucher"); setPage("login"); }} />
+              </div>
+              {featuredPackages.length > 0 && (
+                <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Popular today</div>
+                  <div className="mt-2 space-y-2">
+                    {featuredPackages.slice(0, 2).map((pkg) => (
+                      <div key={pkg.id} className="flex items-center justify-between rounded-lg bg-black/20 px-3 py-2">
+                        <div>
+                          <div className="text-sm font-medium text-white">{pkg.name}</div>
+                          <div className="text-xs text-slate-400">{pkg.duration_days > 0 ? `${pkg.duration_days} day access` : "Flexible access"}</div>
+                        </div>
+                        <div className="text-sm font-semibold text-primary">KES {Number(pkg.price).toLocaleString()}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex justify-center gap-3 text-xs text-slate-500">
+                <button className="hover:text-primary" onClick={() => setPage("terms")}>Terms</button>
+                <button className="hover:text-primary" onClick={() => setPage("support")}>Support</button>
               </div>
               {brand.support_phone && (
                 <p className="text-center text-xs text-slate-500 pt-2">Need help? <a href={`tel:${brand.support_phone}`} className="text-primary hover:underline">{brand.support_phone}</a></p>
@@ -258,11 +279,37 @@ function CaptivePortal() {
             </div>
           )}
 
+          {/* Terms */}
+          {page === "terms" && (
+            <div className="p-6 space-y-4">
+              <BackBtn onClick={() => setPage("landing")} />
+              <h2 className="text-lg font-bold text-white">Terms & Fair Usage</h2>
+              <div className="space-y-2 text-sm text-slate-400">
+                <p>Access is subject to availability and package terms.</p>
+                <p>Fair usage policies may apply during peak periods.</p>
+                <p>Payments are non-refundable once service has been activated.</p>
+              </div>
+            </div>
+          )}
+
+          {page === "support" && (
+            <div className="p-6 space-y-4">
+              <BackBtn onClick={() => setPage("landing")} />
+              <h2 className="text-lg font-bold text-white">Contact Support</h2>
+              <div className="space-y-2 text-sm text-slate-400">
+                {brand.support_phone && <p>Call: <a href={`tel:${brand.support_phone}`} className="text-primary hover:underline">{brand.support_phone}</a></p>}
+                {brand.support_email && <p>Email: <a href={`mailto:${brand.support_email}`} className="text-primary hover:underline">{brand.support_email}</a></p>}
+                <p>Our team can assist with activation, payments, and service issues.</p>
+              </div>
+            </div>
+          )}
+
           {/* Packages */}
           {page === "packages" && (
             <div className="p-6 space-y-4">
               <BackBtn onClick={() => setPage("landing")} />
               <h2 className="text-lg font-bold text-white">Choose a Package</h2>
+              <p className="text-sm text-slate-400">Select a plan that fits your usage and budget.</p>
               <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                 {packages.length === 0 && <p className="text-sm text-slate-400 text-center py-4">No packages available.</p>}
                 {packages.map((pkg) => (

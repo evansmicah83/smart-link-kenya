@@ -423,7 +423,7 @@ function AaaPage() {
             <Button onClick={() => openNasDialog()}><Plus className="h-4 w-4 mr-2" />Add NAS</Button>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
+          <div className="overflow-x-auto rounded-xl border border-border/60 bg-card">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -468,7 +468,7 @@ function AaaPage() {
             <Button onClick={() => openClientDialog()}><Plus className="h-4 w-4 mr-2" />Add Client</Button>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
+          <div className="overflow-x-auto rounded-xl border border-border/60 bg-card">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -526,7 +526,7 @@ function AaaPage() {
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
+          <div className="overflow-x-auto rounded-xl border border-border/60 bg-card">
             <Table>
               <TableHeader>
                 <TableRow>

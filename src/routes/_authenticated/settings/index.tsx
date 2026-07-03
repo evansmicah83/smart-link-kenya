@@ -163,11 +163,10 @@ function SettingsPage() {
       </div>
 
       <Tabs defaultValue="general" className="flex flex-col md:flex-row gap-6">
-        <TooltipProvider delayDuration={300}>
-        <TabsList className="flex flex-row md:flex-col h-auto w-full md:w-52 shrink-0 bg-muted/50 p-1.5 rounded-xl gap-1 overflow-x-auto md:overflow-visible scrollbar-none">
+        <TabsList className="grid grid-cols-2 md:grid md:grid-cols-1 h-auto w-full md:w-52 shrink-0 bg-muted/50 p-1.5 rounded-xl gap-1">
           {([
             { value: "general",       icon: <Building2 className="h-4 w-4" />,  label: "General" },
-            { value: "branding",       icon: <Palette className="h-4 w-4" />,   label: "Branding" },
+            { value: "branding",      icon: <Palette className="h-4 w-4" />,    label: "Branding" },
             { value: "branches",      icon: <Building2 className="h-4 w-4" />,  label: "Branches" },
             { value: "mpesa",         icon: <CreditCard className="h-4 w-4" />, label: "M-Pesa" },
             { value: "sms",           icon: <Bell className="h-4 w-4" />,       label: "SMS" },
@@ -175,21 +174,14 @@ function SettingsPage() {
             { value: "notifications", icon: <Bell className="h-4 w-4" />,       label: "Notifications" },
             { value: "team",          icon: <Users className="h-4 w-4" />,      label: "Team" },
             { value: "security",      icon: <Shield className="h-4 w-4" />,     label: "Security" },
-            { value: "outages",        icon: <Globe className="h-4 w-4" />,      label: "Outages" },
+            { value: "outages",       icon: <Globe className="h-4 w-4" />,      label: "Outages" },
           ] as const).map(({ value, icon, label }) => (
-            <Tooltip key={value}>
-              <TooltipTrigger asChild>
-                <TabsTrigger value={value} className="shrink-0 md:w-full justify-start gap-2 px-3 py-2 text-sm">
-                  {icon}
-                  <span className="hidden xs:inline md:inline">{label}</span>
-                </TabsTrigger>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="md:hidden">{label}</TooltipContent>
-            </Tooltip>
+            <TabsTrigger key={value} value={value} className="w-full justify-start gap-2 px-3 py-2 text-sm">
+              {icon}
+              <span>{label}</span>
+            </TabsTrigger>
           ))}
         </TabsList>
-        </TooltipProvider>
-
         <div className="flex-1 min-w-0">
 
         {/* Branding */}
@@ -241,6 +233,19 @@ function SettingsPage() {
             </Field>
             <Field label="Invoice Footer">
               <Textarea value={bf.invoice_footer ?? ""} onChange={(e) => setBrandForm((f) => ({ ...f, invoice_footer: e.target.value }))} rows={2} />
+            </Field>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Email From Name">
+                <Input value={bf.email_from_name ?? ""} onChange={(e) => setBrandForm((f) => ({ ...f, email_from_name: e.target.value }))} placeholder="SmartLinkNet" />
+              </Field>
+              <Field label="Email From Address">
+                <Input value={bf.email_from_address ?? ""} onChange={(e) => setBrandForm((f) => ({ ...f, email_from_address: e.target.value }))} placeholder="billing@yourisp.co.ke" />
+              </Field>
+            </div>
+            <Field label="Brand Theme JSON (light / dark / typography)">
+              <Textarea value={bf.brand_config ? JSON.stringify(bf.brand_config, null, 2) : ""} onChange={(e) => {
+                try { setBrandForm((f) => ({ ...f, brand_config: e.target.value ? JSON.parse(e.target.value) : {} })); } catch { setBrandForm((f) => ({ ...f, brand_config: e.target.value })); }
+              }} rows={6} className="font-mono text-xs" placeholder='{"light_theme_colors":{"primary":"#0f172a"},"dark_theme_colors":{"background":"#020617"},"typography":{"font_family":"Inter, sans-serif"}}' />
             </Field>
             <Field label="Custom CSS Overrides">
               <Textarea value={bf.css_overrides ?? ""} onChange={(e) => setBrandForm((f) => ({ ...f, css_overrides: e.target.value }))} rows={4} className="font-mono text-xs" placeholder="/* optional */" />
@@ -301,7 +306,7 @@ function SettingsPage() {
                 <Field label="Code"><Input value={branchForm.code} onChange={(e) => setBranchForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))} placeholder="HQ" /></Field>
                 <Field label="City"><Input value={branchForm.city} onChange={(e) => setBranchForm((f) => ({ ...f, city: e.target.value }))} /></Field>
                 <Field label="Phone"><Input value={branchForm.phone} onChange={(e) => setBranchForm((f) => ({ ...f, phone: e.target.value }))} /></Field>
-                <Field label="Address" className="col-span-2"><Input value={branchForm.address} onChange={(e) => setBranchForm((f) => ({ ...f, address: e.target.value }))} /></Field>
+                <Field label="Address" className="sm:col-span-2"><Input value={branchForm.address} onChange={(e) => setBranchForm((f) => ({ ...f, address: e.target.value }))} /></Field>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setBranchOpen(false)}>Cancel</Button>
@@ -321,7 +326,7 @@ function SettingsPage() {
               <Field label="Passkey"><Input type={showSecrets ? "text" : "password"} value={mpesaForm.passkey ?? ""} onChange={(e) => setMpesaForm((f) => ({ ...f, passkey: e.target.value }))} /></Field>
               <Field label="Initiator Name"><Input value={mpesaForm.initiator_name ?? ""} onChange={(e) => setMpesaForm((f) => ({ ...f, initiator_name: e.target.value }))} /></Field>
               <Field label="Security Credential"><Input type={showSecrets ? "text" : "password"} value={mpesaForm.security_credential ?? ""} onChange={(e) => setMpesaForm((f) => ({ ...f, security_credential: e.target.value }))} /></Field>
-              <Field label="Callback URL" className="col-span-2"><Input value={mpesaForm.callback_url ?? ""} onChange={(e) => setMpesaForm((f) => ({ ...f, callback_url: e.target.value }))} placeholder="https://your-project.supabase.co/functions/v1/mpesa-callback" /></Field>
+              <Field label="Callback URL" className="sm:col-span-2"><Input value={mpesaForm.callback_url ?? ""} onChange={(e) => setMpesaForm((f) => ({ ...f, callback_url: e.target.value }))} placeholder="https://your-project.supabase.co/functions/v1/mpesa-callback" /></Field>
             </div>
             <div className="flex items-center gap-4">
               <button onClick={() => setShowSecrets((v) => !v)} className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground">

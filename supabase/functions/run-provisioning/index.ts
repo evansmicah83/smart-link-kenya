@@ -145,14 +145,22 @@ async function stepUpdateRadius(sb: any, input: Record<string, unknown>) {
 }
 
 async function stepActivateRouterUser(sb: any, input: Record<string, unknown>) {
-  const { data: sub } = await sb.from("subscriptions").select("router_id, username").eq("id", input["subscription_id"]).maybeSingle();
+  const { data: sub } = await sb.from("subscriptions").select("router_id, username, password, type, profile, pool_name").eq("id", input["subscription_id"]).maybeSingle();
   if (!sub?.router_id) return { skipped: true, reason: "no_router" };
+  if (!sub.username)   return { skipped: true, reason: "no_username" };
+
+  const subType: string = sub.type ?? "hotspot";
+  const command = subType === "pppoe" ? "add_pppoe_user" : "add_hotspot_user";
+  const params: Record<string, unknown> = { username: sub.username, password: sub.password ?? sub.username };
+  if (sub.profile)   params["profile"]   = sub.profile;
+  if (sub.pool_name) params["pool_name"] = sub.pool_name;
+
   const { error } = await sb.functions.invoke("router-command", {
-    body: { routerId: sub.router_id, command: "activate_user", params: { username: sub.username, subscriptionId: input["subscription_id"] } },
+    body: { routerId: sub.router_id, command, params },
   });
   if (error) throw new Error(`Router activation failed: ${error.message}`);
   await sb.from("provisioning_events").insert({ tenant_id: input["tenant_id"], subscription_id: input["subscription_id"], router_id: sub.router_id, event: "provisioned", username: sub.username, adapter_type: "mikrotik_rest" }).catch(() => {});
-  return { activated: true, router_id: sub.router_id, username: sub.username };
+  return { activated: true, router_id: sub.router_id, username: sub.username, sub_type: subType };
 }
 
 async function stepSendNotification(sb: any, input: Record<string, unknown>) {
@@ -186,15 +194,19 @@ async function stepSuspendService(sb: any, input: Record<string, unknown>) {
 async function stepSuspendRouterUser(sb: any, input: Record<string, unknown>) {
   if (input["skip"]) return { skipped: true };
   if (!input["router_id"]) return { skipped: true, reason: "no_router" };
-  const { data: sub } = await sb.from("subscriptions").select("username").eq("id", input["subscription_id"]).maybeSingle();
+  const { data: sub } = await sb.from("subscriptions").select("username, type").eq("id", input["subscription_id"]).maybeSingle();
   if (!sub?.username) return { skipped: true, reason: "no_username" };
+
+  const subType: string = sub.type ?? "hotspot";
+  const command = subType === "pppoe" ? "remove_pppoe_user" : "remove_hotspot_user";
+
   const { error } = await sb.functions.invoke("router-command", {
-    body: { routerId: input["router_id"], command: "suspend_user", params: { username: sub.username } },
+    body: { routerId: input["router_id"], command, params: { username: sub.username } },
   });
   if (error) throw new Error(`Router suspend failed: ${error.message}`);
   await sb.from("radius_users").update({ is_active: false, updated_at: now() }).eq("tenant_id", input["tenant_id"]).eq("subscription_id", input["subscription_id"]);
   await sb.from("provisioning_events").insert({ tenant_id: input["tenant_id"], subscription_id: input["subscription_id"], router_id: input["router_id"], event: "suspended", username: sub.username }).catch(() => {});
-  return { suspended: true, username: sub.username };
+  return { suspended: true, username: sub.username, sub_type: subType };
 }
 
 async function stepRecordFailure(sb: any, input: Record<string, unknown>) {
@@ -256,7 +268,12 @@ function getSteps(workflowType: string, payload: Record<string, unknown>): StepD
         name: "activate_router_user", type: "activate_router_user", canCompensate: true,
         buildInput: (p, r) => ({ subscription_id: r["create_subscription"]?.["subscription_id"], tenant_id: p["tenant_id"] }),
         execute: (sb, i) => stepActivateRouterUser(sb, i),
-        compensate: async (sb, _i, o) => { if (o["router_id"] && o["username"]) await sb.functions.invoke("router-command", { body: { routerId: o["router_id"], command: "suspend_user", params: { username: o["username"] } } }).catch(() => {}); },
+        compensate: async (sb, _i, o) => {
+          if (o["router_id"] && o["username"]) {
+            const cmd = o["sub_type"] === "pppoe" ? "remove_pppoe_user" : "remove_hotspot_user";
+            await sb.functions.invoke("router-command", { body: { routerId: o["router_id"], command: cmd, params: { username: o["username"] } } }).catch(() => {});
+          }
+        },
       },
       {
         name: "send_notifications", type: "send_sms", canCompensate: false,
@@ -288,7 +305,16 @@ function getSteps(workflowType: string, payload: Record<string, unknown>): StepD
         name: "update_router", type: "suspend_router_user", canCompensate: true,
         buildInput: (p, r) => ({ subscription_id: r["check_grace_period"]?.["subscription_id"], router_id: r["check_grace_period"]?.["router_id"], skip: r["check_grace_period"]?.["skip_suspension"] ?? false, tenant_id: p["tenant_id"] }),
         execute: (sb, i) => stepSuspendRouterUser(sb, i),
-        compensate: async (sb, i, o) => { if (!o["skipped"] && i["router_id"] && o["username"]) await sb.functions.invoke("router-command", { body: { routerId: i["router_id"], command: "activate_user", params: { username: o["username"] } } }).catch(() => {}); },
+        compensate: async (sb, i, o) => {
+          if (!o["skipped"] && i["router_id"] && o["username"]) {
+            const { data: sub } = await sb.from("subscriptions").select("password, type, profile, pool_name").eq("id", i["subscription_id"]).maybeSingle();
+            const cmd = (sub?.type ?? o["sub_type"]) === "pppoe" ? "add_pppoe_user" : "add_hotspot_user";
+            const params: Record<string, unknown> = { username: o["username"], password: sub?.password ?? o["username"] };
+            if (sub?.profile)   params["profile"]   = sub.profile;
+            if (sub?.pool_name) params["pool_name"] = sub.pool_name;
+            await sb.functions.invoke("router-command", { body: { routerId: i["router_id"], command: cmd, params } }).catch(() => {});
+          }
+        },
       },
       {
         name: "notify_customer", type: "send_sms", canCompensate: false,
@@ -346,7 +372,12 @@ function getSteps(workflowType: string, payload: Record<string, unknown>): StepD
         name: "activate_router_user", type: "activate_router_user", canCompensate: true,
         buildInput: (p) => ({ subscription_id: p["subscription_id"], tenant_id: p["tenant_id"] }),
         execute: (sb, i) => stepActivateRouterUser(sb, i),
-        compensate: async (sb, _i, o) => { if (o["router_id"] && o["username"]) await sb.functions.invoke("router-command", { body: { routerId: o["router_id"], command: "suspend_user", params: { username: o["username"] } } }).catch(() => {}); },
+        compensate: async (sb, _i, o) => {
+          if (o["router_id"] && o["username"]) {
+            const cmd = o["sub_type"] === "pppoe" ? "remove_pppoe_user" : "remove_hotspot_user";
+            await sb.functions.invoke("router-command", { body: { routerId: o["router_id"], command: cmd, params: { username: o["username"] } } }).catch(() => {});
+          }
+        },
       },
       {
         name: "notify_customer", type: "send_sms", canCompensate: false,
@@ -378,7 +409,16 @@ function getSteps(workflowType: string, payload: Record<string, unknown>): StepD
         name: "suspend_router_user", type: "suspend_router_user", canCompensate: true,
         buildInput: (p) => ({ subscription_id: p["subscription_id"], tenant_id: p["tenant_id"] }),
         execute: (sb, i) => stepSuspendRouterUser(sb, i),
-        compensate: async (sb, i, o) => { if (o["router_id"] && o["username"]) await sb.functions.invoke("router-command", { body: { routerId: i["router_id"], command: "activate_user", params: { username: o["username"] } } }).catch(() => {}); },
+        compensate: async (sb, i, o) => {
+          if (o["router_id"] && o["username"]) {
+            const { data: sub } = await sb.from("subscriptions").select("password, type, profile, pool_name").eq("id", i["subscription_id"]).maybeSingle();
+            const cmd = (sub?.type ?? o["sub_type"]) === "pppoe" ? "add_pppoe_user" : "add_hotspot_user";
+            const params: Record<string, unknown> = { username: o["username"], password: sub?.password ?? o["username"] };
+            if (sub?.profile)   params["profile"]   = sub.profile;
+            if (sub?.pool_name) params["pool_name"] = sub.pool_name;
+            await sb.functions.invoke("router-command", { body: { routerId: i["router_id"], command: cmd, params } }).catch(() => {});
+          }
+        },
       },
       {
         name: "notify_customer", type: "send_sms", canCompensate: false,

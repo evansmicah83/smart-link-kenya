@@ -15,10 +15,12 @@ export default defineConfig({
       chunkSizeWarningLimit: 1500,
     },
     server: {
+      host: "127.0.0.1",
       port: 8080,
       hmr: {
+        host: "127.0.0.1",
         port: 8080,
-        host: "localhost",
+        clientPort: 8080,
         protocol: "ws",
       },
     },

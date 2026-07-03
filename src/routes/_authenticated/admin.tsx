@@ -149,8 +149,8 @@ function AdminPage() {
         <Input className="max-w-sm" placeholder="Search tenants..." value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
 
-      <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="rounded-xl border border-border/60 bg-card overflow-x-auto">
+        <table className="w-full text-sm min-w-[700px]">
           <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
             <tr>
               <th className="px-4 py-3 text-left">Tenant</th>

@@ -225,7 +225,7 @@ function BillingPage() {
   const watchMethod = payForm.watch("method");
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Billing</h1>
@@ -246,10 +246,10 @@ function BillingPage() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
-          <TabsTrigger value="payments">Payments ({payments.data?.length ?? 0})</TabsTrigger>
-          <TabsTrigger value="invoices">Invoices ({invoices.data?.length ?? 0})</TabsTrigger>
-          <TabsTrigger value="expenses">Expenses ({expenses.data?.length ?? 0})</TabsTrigger>
+        <TabsList className="w-full flex">
+          <TabsTrigger value="payments" className="flex-1 text-xs sm:text-sm">Payments ({payments.data?.length ?? 0})</TabsTrigger>
+          <TabsTrigger value="invoices" className="flex-1 text-xs sm:text-sm">Invoices ({invoices.data?.length ?? 0})</TabsTrigger>
+          <TabsTrigger value="expenses" className="flex-1 text-xs sm:text-sm">Expenses ({expenses.data?.length ?? 0})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="payments">
@@ -260,14 +260,14 @@ function BillingPage() {
           >
             {payments.data?.map((p) => (
               <tr key={p.id} className="border-t border-border/60 hover:bg-accent/30">
-                <td className="px-4 py-3"><div className="font-medium">{(p as any).customers?.full_name ?? "—"}</div><div className="text-xs text-muted-foreground">{(p as any).customers?.phone}</div></td>
-                <td className="px-4 py-3 font-semibold text-green-500">KES {Number(p.amount).toLocaleString()}</td>
-                <td className="px-4 py-3 capitalize text-sm flex items-center gap-1">
+                <td data-label="Customer" className="px-4 py-3"><div className="font-medium">{(p as any).customers?.full_name ?? "—"}</div><div className="text-xs text-muted-foreground">{(p as any).customers?.phone}</div></td>
+                <td data-label="Amount" className="px-4 py-3 font-semibold text-green-500">KES {Number(p.amount).toLocaleString()}</td>
+                <td data-label="Method" className="px-4 py-3 capitalize text-sm flex items-center gap-1">
                   {p.method === "mpesa" ? <Smartphone className="h-3 w-3" /> : <CreditCard className="h-3 w-3" />}{p.method}
                 </td>
-                <td className="px-4 py-3 text-xs text-muted-foreground font-mono">{p.mpesa_receipt ?? p.reference ?? "—"}</td>
-                <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs capitalize ${STATUS_COLORS[p.status] ?? "bg-muted"}`}>{p.status}</span></td>
-                <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(p.created_at).toLocaleString()}</td>
+                <td data-label="Reference" className="px-4 py-3 text-xs text-muted-foreground font-mono">{p.mpesa_receipt ?? p.reference ?? "—"}</td>
+                <td data-label="Status" className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs capitalize ${STATUS_COLORS[p.status] ?? "bg-muted"}`}>{p.status}</span></td>
+                <td data-label="Date" className="px-4 py-3 text-xs text-muted-foreground">{new Date(p.created_at).toLocaleString()}</td>
               </tr>
             ))}
           </DataTable>
@@ -281,13 +281,13 @@ function BillingPage() {
           >
             {invoices.data?.map((i) => (
               <tr key={i.id} className="border-t border-border/60 hover:bg-accent/30">
-                <td className="px-4 py-3 font-mono text-xs">{i.invoice_no}</td>
-                <td className="px-4 py-3">{(i as any).customers?.full_name ?? "—"}</td>
-                <td className="px-4 py-3 font-semibold">KES {Number(i.total).toLocaleString()}</td>
-                <td className="px-4 py-3 text-green-500">KES {Number(i.amount_paid).toLocaleString()}</td>
-                <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs capitalize ${STATUS_COLORS[i.status] ?? "bg-muted"}`}>{i.status}</span></td>
-                <td className="px-4 py-3 text-xs text-muted-foreground">{i.due_date ? new Date(i.due_date).toLocaleDateString() : "—"}</td>
-                <td className="px-4 py-3">
+                <td data-label="Invoice #" className="px-4 py-3 font-mono text-xs">{i.invoice_no}</td>
+                <td data-label="Customer" className="px-4 py-3">{(i as any).customers?.full_name ?? "—"}</td>
+                <td data-label="Total" className="px-4 py-3 font-semibold">KES {Number(i.total).toLocaleString()}</td>
+                <td data-label="Paid" className="px-4 py-3 text-green-500">KES {Number(i.amount_paid).toLocaleString()}</td>
+                <td data-label="Status" className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs capitalize ${STATUS_COLORS[i.status] ?? "bg-muted"}`}>{i.status}</span></td>
+                <td data-label="Due" className="px-4 py-3 text-xs text-muted-foreground">{i.due_date ? new Date(i.due_date).toLocaleDateString() : "—"}</td>
+                <td data-label="Actions" className="px-4 py-3">
                   {i.status === "unpaid" && (
                     <Button size="sm" variant="outline" onClick={() => markPaid.mutate(i.id)}>Mark Paid</Button>
                   )}
@@ -305,10 +305,10 @@ function BillingPage() {
           >
             {expenses.data?.map((e) => (
               <tr key={e.id} className="border-t border-border/60 hover:bg-accent/30">
-                <td className="px-4 py-3 font-medium">{e.description}</td>
-                <td className="px-4 py-3 capitalize text-xs">{e.category}</td>
-                <td className="px-4 py-3 font-semibold text-red-500">KES {Number(e.amount).toLocaleString()}</td>
-                <td className="px-4 py-3 text-xs text-muted-foreground">{e.date}</td>
+                <td data-label="Description" className="px-4 py-3 font-medium">{e.description}</td>
+                <td data-label="Category" className="px-4 py-3 capitalize text-xs">{e.category}</td>
+                <td data-label="Amount" className="px-4 py-3 font-semibold text-red-500">KES {Number(e.amount).toLocaleString()}</td>
+                <td data-label="Date" className="px-4 py-3 text-xs text-muted-foreground">{e.date}</td>
               </tr>
             ))}
           </DataTable>
@@ -436,8 +436,16 @@ function StatCard({ icon: Icon, label, value, color }: { icon: React.ComponentTy
 function DataTable({ loading, cols, empty, children }: { loading: boolean; cols: string[]; empty: string; children?: React.ReactNode }) {
   const hasData = children && (Array.isArray(children) ? children.length > 0 : true);
   return (
-    <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
-      <table className="w-full text-sm">
+    <div className="rounded-xl border border-border/60 bg-card overflow-x-auto">
+      <style>{`
+        @media (max-width: 640px) {
+          .responsive-table thead { display: none; }
+          .responsive-table tr { display: block; border-bottom: 1px solid hsl(var(--border) / 0.6); padding: 0.5rem 0; }
+          .responsive-table td { display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 1rem; font-size: 0.8rem; }
+          .responsive-table td::before { content: attr(data-label); font-weight: 600; color: hsl(var(--muted-foreground)); text-transform: uppercase; font-size: 0.65rem; margin-right: 0.5rem; flex-shrink: 0; }
+        }
+      `}</style>
+      <table className="responsive-table w-full text-sm min-w-0">
         <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
           <tr>{cols.map((c) => <th key={c} className="px-4 py-3 text-left">{c}</th>)}</tr>
         </thead>
@@ -452,3 +460,4 @@ function DataTable({ loading, cols, empty, children }: { loading: boolean; cols:
     </div>
   );
 }
+

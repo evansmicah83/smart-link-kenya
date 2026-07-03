@@ -161,6 +161,7 @@ function CustomerPortal() {
   }
 
   const primary = brand.primary_color ?? "#0ea5e9";
+  const heroCta = subscription ? "Renew or upgrade instantly" : "Purchase a package to get online";
 
   if (loading) return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center">
@@ -212,6 +213,7 @@ function CustomerPortal() {
           {subscription && pkg ? (
             <>
               <div className="text-xl font-bold">{pkg.name}</div>
+              <div className="text-sm text-slate-400">{heroCta}</div>
               <div className="grid grid-cols-3 gap-3">
                 <div className="rounded-xl bg-white/5 p-3 text-center">
                   <Clock className="h-4 w-4 mx-auto mb-1 text-yellow-400" />

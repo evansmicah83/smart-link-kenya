@@ -191,8 +191,8 @@ function VouchersPage() {
             <Button variant="outline" onClick={() => qc.invalidateQueries({ queryKey: ["vouchers"] })}><RefreshCw className="h-4 w-4" /></Button>
           </div>
 
-          <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="rounded-xl border border-border/60 bg-card overflow-x-auto">
+            <table className="w-full text-sm min-w-[550px]">
               <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="px-4 py-3 text-left">Code</th>
@@ -231,8 +231,8 @@ function VouchersPage() {
         </TabsContent>
 
         <TabsContent value="batches">
-          <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="rounded-xl border border-border/60 bg-card overflow-x-auto">
+            <table className="w-full text-sm min-w-[450px]">
               <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="px-4 py-3 text-left">Batch Name</th>

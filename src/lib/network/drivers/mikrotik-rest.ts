@@ -22,6 +22,7 @@ import type {
   ServiceType,
 } from "../types";
 import type { IRouterAdapter, RouterLogEntry } from "./interfaces";
+import { recordAdapterHealth } from "../services/telemetry";
 
 // ─── Low-level REST client ────────────────────────────────────────────────────
 
@@ -52,6 +53,9 @@ function createRestClient(cfg: RouterConnectionConfig): MikrotikRestClient {
         signal: controller.signal,
       });
       clearTimeout(tid);
+      if (!res || typeof res !== "object" || !("ok" in res)) {
+        throw new Error("MikroTik REST connection failed");
+      }
       if (!res.ok) {
         const text = await res.text().catch(() => res.statusText);
         throw new Error(`MikroTik REST ${res.status}: ${text}`);
@@ -196,10 +200,14 @@ export class MikrotikRestAdapter implements IRouterAdapter {
 
   async getStatus(): Promise<NetworkCommandResult<RouterStatus>> {
     return wrapResult(this.adapterType, async () => {
-      const [resource, identity] = await Promise.all([
+      const [resourceResult, identityResult] = await Promise.allSettled([
         this.client.get<Record<string, string>>("/system/resource"),
         this.client.get<Record<string, string>>("/system/identity"),
       ]);
+      if (resourceResult.status === "rejected") throw resourceResult.reason;
+      if (identityResult.status === "rejected") throw identityResult.reason;
+      const resource = resourceResult.value;
+      const identity = identityResult.value;
       const total = parseInt(resource["total-memory"] ?? "1");
       const free  = parseInt(resource["free-memory"]  ?? "0");
       return {
@@ -401,7 +409,7 @@ export class MikrotikRestAdapter implements IRouterAdapter {
     const start = Date.now();
     try {
       await this.client.get("/system/identity");
-      return {
+      const health = {
         adapterType: this.adapterType,
         routerRef: this.routerRef,
         isHealthy: true,
@@ -409,9 +417,11 @@ export class MikrotikRestAdapter implements IRouterAdapter {
         errorCount: 0,
         lastError: null,
         checkedAt: now(),
-      };
+      } satisfies AdapterHealth;
+      await recordAdapterHealth(health);
+      return health;
     } catch (err: unknown) {
-      return {
+      const health = {
         adapterType: this.adapterType,
         routerRef: this.routerRef,
         isHealthy: false,
@@ -419,7 +429,9 @@ export class MikrotikRestAdapter implements IRouterAdapter {
         errorCount: 1,
         lastError: (err as Error).message,
         checkedAt: now(),
-      };
+      } satisfies AdapterHealth;
+      await recordAdapterHealth(health);
+      return health;
     }
   }
 }

@@ -5,6 +5,7 @@
  * All steps that mutate state support compensation (rollback).
  */
 import { supabase } from "@/integrations/supabase/client";
+import { authService } from "@/lib/network";
 import type { StepDefinition, StepContext } from "../types";
 
 const now = () => new Date().toISOString();
@@ -197,42 +198,29 @@ export function buildPaymentSuccessSteps(): StepDefinition[] {
       async execute(input) {
         const { data: sub } = await (supabase as any)
           .from("subscriptions")
-          .select("router_id, username, package_id")
+          .select("router_id, username, password, package_id, type, profile, pool_name")
           .eq("id", input["subscription_id"])
           .maybeSingle();
         if (!sub?.router_id) return { skipped: true, reason: "no_router" };
+        if (!sub.username)   return { skipped: true, reason: "no_username" };
 
-        const { error } = await supabase.functions.invoke("router-command", {
-          body: {
-            routerId: sub.router_id,
-            command:  "activate_user",
-            params:   { username: sub.username, subscriptionId: input["subscription_id"] },
-          },
-        });
-        if (error) throw new Error(`Router activation failed: ${error.message}`);
-
-        // Record provisioning event
-        await (supabase as any).from("provisioning_events").insert({
-          tenant_id:       input["tenant_id"],
-          subscription_id: input["subscription_id"],
-          router_id:       sub.router_id,
-          event:           "provisioned",
-          username:        sub.username,
-          adapter_type:    "mikrotik_rest",
-        }).catch(() => {});
+        await authService.provisionSubscriptionFromRecord(
+          input["tenant_id"] as string,
+          { ...sub, id: input["subscription_id"] as string }
+        );
 
         return { activated: true, router_id: sub.router_id, username: sub.username };
       },
       async compensate(_input, output) {
-        // Suspend router user if activation is being rolled back
         if (output["router_id"] && output["username"]) {
-          await supabase.functions.invoke("router-command", {
-            body: {
-              routerId: output["router_id"],
-              command:  "suspend_user",
-              params:   { username: output["username"] },
-            },
-          }).catch(() => {});
+          await authService.suspendSubscriptionFromRecord(
+            _input["tenant_id"] as string,
+            {
+              id:        _input["subscription_id"] as string,
+              router_id: output["router_id"] as string,
+              username:  output["username"] as string,
+            }
+          ).catch(() => {});
         }
       },
     },
