@@ -7,7 +7,7 @@ import {
   Ticket, Map, Settings, LogOut, Building2, ShieldCheck, BarChart3, Boxes,
   ChevronDown, Activity, Package, Cable, Network, Wrench,
   QrCode, Bell, Moon, Sun, Wallet, Zap, Layers, Server,
-  MoreHorizontal, X, Megaphone, Globe, AlertTriangle, TrendingUp,
+  MoreHorizontal, X, Megaphone, Globe, TrendingUp,
   UserCircle2, KeyRound, HelpCircle, ExternalLink,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -155,23 +155,6 @@ function AppShellInner({ children }: { children: ReactNode }) {
 
   const brand = useBranding();
 
-  const outages = useQuery({
-    queryKey: ["active-outages", profileQuery.data?.tenant_id],
-    queryFn: async () => {
-      const tid = profileQuery.data?.tenant_id;
-      if (!tid) return [];
-      const { data } = await (supabase as any)
-        .from("outages")
-        .select("id, title, type, eta")
-        .eq("tenant_id", tid)
-        .eq("status", "active")
-        .limit(1);
-      return data ?? [];
-    },
-    enabled: !!profileQuery.data?.tenant_id,
-    refetchInterval: 60_000,
-  });
-
   const roles = rolesQuery.data ?? [];
   const isSuperAdmin = roles.includes("super_admin");
   const hasTenantRole = roles.some((r) => r !== "super_admin");
@@ -251,14 +234,6 @@ function AppShellInner({ children }: { children: ReactNode }) {
 
       {/* Main */}
       <div className="flex flex-1 flex-col md:pl-64 min-w-0">
-        {/* Outage banner */}
-        {(outages.data ?? []).length > 0 && (
-          <div className="flex items-center gap-3 bg-destructive/90 px-4 py-2 text-xs text-white">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            <span className="font-medium">{outages.data![0].title}</span>
-            {outages.data![0].eta && <span className="opacity-80">· ETA: {new Date(outages.data![0].eta).toLocaleTimeString()}</span>}
-          </div>
-        )}
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border/60 bg-background/80 px-4 backdrop-blur-xl md:h-16 md:px-8">
           {/* Mobile: brand */}
           <Link to="/dashboard" className="flex items-center gap-2 md:hidden">

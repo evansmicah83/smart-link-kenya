@@ -84,13 +84,13 @@ function Dashboard() {
         supabase.from("customers").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId!).eq("status", "suspended"),
         supabase.from("subscriptions").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId!).eq("status", "active"),
         supabase.from("invoices").select("total").eq("tenant_id", tenantId!).eq("status", "unpaid"),
-        supabase.from("payments").select("amount").eq("tenant_id", tenantId!).eq("status", "completed").gte("created_at", today.toISOString()).lt(tomorrow.toISOString()),
-        supabase.from("notifications").select("id,is_read").eq("tenant_id", tenantId!),
+        supabase.from("payments").select("amount").eq("tenant_id", tenantId!).eq("status", "completed").gte("created_at", today.toISOString()).lt("created_at", tomorrow.toISOString()),
+        supabase.from("notifications").select("id,read").eq("user_id", user!.id),
       ]);
 
       const unpaidTotal = (unpaidInvoices.data ?? []).reduce((sum, invoice) => sum + Number(invoice.total ?? 0), 0);
       const todayTotal = (todayPayments.data ?? []).reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
-      const unreadNotifications = (notifications.data ?? []).filter((notification) => notification.is_read === false).length;
+      const unreadNotifications = (notifications.data ?? []).filter((notification) => notification.read === false).length;
 
       const routerData = routers.data ?? [];
       return {
