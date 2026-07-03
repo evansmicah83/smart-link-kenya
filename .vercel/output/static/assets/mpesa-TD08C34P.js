@@ -1,1 +1,0 @@
-import{D as e,O as t}from"./index-DaaOP_OX.js";e();async function n(e){let{data:n,error:r}=await t.functions.invoke(`mpesa-stk-push`,{body:e});if(r)throw r;return n}function r(e){let t=e.replace(/\D/g,``);return t.startsWith(`0`)?`254`+t.slice(1):t.startsWith(`+`)?t.slice(1):t.startsWith(`254`)?t:`254`+t}export{n,r as t};
