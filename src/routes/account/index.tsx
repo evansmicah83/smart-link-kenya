@@ -7,9 +7,9 @@ import { useState, useEffect } from "react";
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  Wifi, Package, Clock, Zap, Database, CreditCard, Activity,
+  Wifi, Package, Clock, Zap, Database, Activity,
   Ticket, RefreshCw, Download, Phone, ChevronRight, CheckCircle,
-  AlertCircle, Loader2, ArrowLeft, TrendingUp, Shield,
+  AlertCircle, Loader2, ArrowLeft, TrendingUp,
 } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, XAxis, Tooltip } from "recharts";
 
@@ -18,7 +18,7 @@ const searchSchema = z.object({
   isp: z.string().optional(),
 });
 
-export const Route = createFileRoute("/account/")(  {
+export const Route = createFileRoute("/account/")({
   ssr: false,
   validateSearch: (s) => searchSchema.parse(s),
   component: CustomerPortal,
