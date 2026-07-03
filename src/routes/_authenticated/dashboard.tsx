@@ -1,20 +1,51 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+﻿import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo, type ComponentType } from "react";
 import { useAuth, fetchProfile, fetchMyRoles } from "@/lib/auth";
 import { supabase } from "@/integrations/supabase/client";
 import { OnboardTenant } from "@/components/OnboardTenant";
 import { useBranding } from "@/lib/branding";
 import {
-  Activity, Users, Router as RouterIcon, Receipt, Wifi, TrendingUp,
-  AlertTriangle, CheckCircle, Clock, Package, ArrowRight, Zap,
-  Signal, DollarSign, UserCheck, UserX, BarChart2, Bell, Ticket,
+  Activity,
+  Users,
+  Router as RouterIcon,
+  Receipt,
+  Wifi,
+  Ticket,
+  TrendingUp,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  Package,
+  ArrowRight,
+  Zap,
+  Signal,
+  DollarSign,
+  Bell,
+  Search,
+  MapPin,
+  ShieldCheck,
+  BarChart3,
+  Map,
+  Globe,
+  FileText,
+  Shield,
+  Percent,
+  WifiOff,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { AreaChart, Area, Tooltip as RTooltip, ResponsiveContainer, XAxis } from "recharts";
+import { AreaChart, Area, ResponsiveContainer, Tooltip as RTooltip, XAxis, CartesianGrid } from "recharts";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: Dashboard,
 });
+
+const currencyFormatter = new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES", maximumFractionDigits: 0 });
+
+function formatCurrency(n?: number | null) {
+  if (n === null || n === undefined) return "—";
+  return currencyFormatter.format(Number(n));
+}
 
 function Dashboard() {
   const { user } = useAuth();
@@ -33,75 +64,94 @@ function Dashboard() {
   });
 
   const tenantId = profile.data?.tenant_id;
-  const isSuper = (roles.data ?? []).includes("super_admin");
 
   const stats = useQuery({
     queryKey: ["dashboard-stats", tenantId],
     queryFn: async () => {
-      const [customers, routers, activeSessions, mtdPayments, openTickets, expiringToday, newThisMonth, suspended] = await Promise.all([
-        supabase.from("customers").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId!),
-        supabase.from("routers").select("id,status").eq("tenant_id", tenantId!),
-        supabase.from("sessions").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId!).is("ended_at", null),
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const [customers, routers, activeSessions, mtdPayments, openTickets, expiringSoon, newCustomers, suspendedCustomers, activeSubscriptions, unpaidInvoices, todayPayments, notifications] = await Promise.all([
+        supabase.from("customers").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId!),
+        supabase.from("routers").select("id,status", { count: "exact", head: true }).eq("tenant_id", tenantId!),
+        supabase.from("sessions").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId!).is("ended_at", null),
         supabase.from("payments").select("amount").eq("tenant_id", tenantId!).eq("status", "completed").gte("created_at", new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()),
-        supabase.from("tickets").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId!).in("status", ["open", "in_progress"]),
-        supabase.from("subscriptions").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId!).eq("status", "active").lte("expires_at", new Date(Date.now() + 86400000 * 3).toISOString()).gte("expires_at", new Date().toISOString()),
-        supabase.from("customers").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId!).gte("created_at", new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()),
-        supabase.from("customers").select("*", { count: "exact", head: true }).eq("tenant_id", tenantId!).eq("status", "suspended"),
+        supabase.from("tickets").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId!).in("status", ["open", "in_progress"]),
+        supabase.from("subscriptions").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId!).eq("status", "active").lte("expires_at", new Date(Date.now() + 86400000 * 3).toISOString()).gte("expires_at", new Date().toISOString()),
+        supabase.from("customers").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId!).gte("created_at", new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()),
+        supabase.from("customers").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId!).eq("status", "suspended"),
+        supabase.from("subscriptions").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId!).eq("status", "active"),
+        supabase.from("invoices").select("total").eq("tenant_id", tenantId!).eq("status", "unpaid"),
+        supabase.from("payments").select("amount").eq("tenant_id", tenantId!).eq("status", "completed").gte("created_at", today.toISOString()).lt(tomorrow.toISOString()),
+        supabase.from("notifications").select("id,is_read").eq("tenant_id", tenantId!),
       ]);
+
+      const unpaidTotal = (unpaidInvoices.data ?? []).reduce((sum, invoice) => sum + Number(invoice.total ?? 0), 0);
+      const todayTotal = (todayPayments.data ?? []).reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
+      const unreadNotifications = (notifications.data ?? []).filter((notification) => notification.is_read === false).length;
+
       const routerData = routers.data ?? [];
       return {
         customers: customers.count ?? 0,
         routersOnline: routerData.filter((r) => r.status === "online").length,
         routersTotal: routerData.length,
         activeSessions: activeSessions.count ?? 0,
-        mtdRevenue: (mtdPayments.data ?? []).reduce((s, p) => s + Number(p.amount), 0),
+        mtdRevenue: (mtdPayments.data ?? []).reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0),
         openTickets: openTickets.count ?? 0,
-        expiringToday: expiringToday.count ?? 0,
-        newThisMonth: newThisMonth.count ?? 0,
-        suspended: suspended.count ?? 0,
+        expiringSoon: expiringSoon.count ?? 0,
+        newCustomers: newCustomers.count ?? 0,
+        suspendedCustomers: suspendedCustomers.count ?? 0,
+        activeSubscriptions: activeSubscriptions.count ?? 0,
+        unpaidInvoices: unpaidInvoices.count ?? 0,
+        outstandingAmount: unpaidTotal,
+        todayRevenue: todayTotal,
+        unreadNotifications,
       };
     },
     enabled: !!tenantId,
     refetchInterval: 30000,
   });
 
-  // Daily revenue for the last 7 days sparkline
-  const revenueChart = useQuery({
-    queryKey: ["revenue-chart", tenantId],
+  const routerDetails = useQuery({
+    queryKey: ["dashboard-routers", tenantId],
     queryFn: async () => {
-      const days = Array.from({ length: 7 }, (_, i) => {
-        const d = new Date();
-        d.setDate(d.getDate() - (6 - i));
-        return d;
-      });
-      const from = days[0].toISOString();
       const { data } = await supabase
-        .from("payments")
-        .select("amount, created_at")
+        .from("routers")
+        .select("id,name,status,cpu_load,memory_used,uptime,is_active")
         .eq("tenant_id", tenantId!)
-        .eq("status", "completed")
-        .gte("created_at", from);
-      return days.map((d) => {
-        const label = d.toLocaleDateString("en-KE", { weekday: "short" });
-        const sum = (data ?? [])
-          .filter((p) => new Date(p.created_at).toDateString() === d.toDateString())
-          .reduce((acc, p) => acc + Number(p.amount), 0);
-        return { day: label, amount: sum };
-      });
+        .order("name", { ascending: true });
+      return data ?? [];
     },
     enabled: !!tenantId,
   });
 
-  const superStats = useQuery({
-    queryKey: ["super-stats"],
+  const revenueChart = useQuery({
+    queryKey: ["revenue-chart", tenantId],
     queryFn: async () => {
-      const [tenants, activeTenants] = await Promise.all([
-        supabase.from("tenants").select("*", { count: "exact", head: true }),
-        supabase.from("tenants").select("*", { count: "exact", head: true }).eq("status", "active"),
-      ]);
-      return { total: tenants.count ?? 0, active: activeTenants.count ?? 0 };
+      const days = Array.from({ length: 7 }, (_, index) => {
+        const date = new Date();
+        date.setDate(date.getDate() - (6 - index));
+        date.setHours(0, 0, 0, 0);
+        return date;
+      });
+      const from = days[0].toISOString();
+      const { data } = await supabase
+        .from("payments")
+        .select("amount,created_at")
+        .eq("tenant_id", tenantId!)
+        .eq("status", "completed")
+        .gte("created_at", from);
+      return days.map((day) => {
+        const label = day.toLocaleDateString("en-KE", { weekday: "short" });
+        const sum = (data ?? [])
+          .filter((payment) => new Date(payment.created_at).toDateString() === day.toDateString())
+          .reduce((total, payment) => total + Number(payment.amount ?? 0), 0);
+        return { day: label, amount: sum };
+      });
     },
-    enabled: isSuper,
+    enabled: !!tenantId,
   });
 
   const recentPayments = useQuery({
@@ -109,10 +159,24 @@ function Dashboard() {
     queryFn: async () => {
       const { data } = await supabase
         .from("payments")
-        .select("id, amount, method, status, created_at, customers(full_name)")
+        .select("id,amount,method,status,created_at,customers(full_name)")
         .eq("tenant_id", tenantId!)
         .order("created_at", { ascending: false })
         .limit(6);
+      return data ?? [];
+    },
+    enabled: !!tenantId,
+  });
+
+  const recentInvoices = useQuery({
+    queryKey: ["recent-invoices", tenantId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("invoices")
+        .select("id,total,status,created_at,customers(full_name)")
+        .eq("tenant_id", tenantId!)
+        .order("created_at", { ascending: false })
+        .limit(5);
       return data ?? [];
     },
     enabled: !!tenantId,
@@ -123,7 +187,7 @@ function Dashboard() {
     queryFn: async () => {
       const { data } = await supabase
         .from("tickets")
-        .select("id, ticket_no, subject, priority, status, created_at")
+        .select("id,ticket_no,subject,priority,status,created_at")
         .eq("tenant_id", tenantId!)
         .in("status", ["open", "in_progress"])
         .order("created_at", { ascending: false })
@@ -133,328 +197,377 @@ function Dashboard() {
     enabled: !!tenantId,
   });
 
+  const customerBreakdown = useQuery({
+    queryKey: ["customer-breakdown", tenantId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("customers")
+        .select("status")
+        .eq("tenant_id", tenantId!);
+      const counts = {
+        active: 0,
+        suspended: 0,
+        pending: 0,
+      };
+      (data ?? []).forEach((customer) => {
+        if (customer.status === "active") counts.active += 1;
+        else if (customer.status === "suspended") counts.suspended += 1;
+        else counts.pending += 1;
+      });
+      return counts;
+    },
+    enabled: !!tenantId,
+  });
+
+  const alertItems = useMemo(() => {
+    const alerts: Array<{ icon: ComponentType<{ className?: string }> ; title: string; label: string; color: string }> = [];
+    if (stats.data?.openTickets) {
+      alerts.push({ icon: Ticket, title: `${stats.data.openTickets} open tickets`, label: "Review support issues", color: "orange" });
+    }
+    if (stats.data?.expiringSoon) {
+      alerts.push({ icon: AlertTriangle, title: `${stats.data.expiringSoon} subscriptions expiring`, label: "Renew before service interruption", color: "yellow" });
+    }
+    (routerDetails.data ?? [])
+      .filter((router) => router.status !== "online")
+      .slice(0, 2)
+      .forEach((router) => {
+        alerts.push({ icon: WifiOff, title: `Router ${router.name ?? router.id} ${router.status}`, label: "Investigate connectivity", color: "red" });
+      });
+    return alerts.length ? alerts : [{ icon: CheckCircle, title: "No critical alerts", label: "All systems are within normal range", color: "green" }];
+  }, [routerDetails.data, stats.data?.expiringSoon, stats.data?.openTickets]);
+
+  const branchName = "Nairobi HQ";
+
   if (!user || profile.isLoading || roles.isLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-        <p className="text-sm text-muted-foreground">Loading workspace…</p>
+        <div className="h-10 w-10 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        <p className="text-sm text-muted-foreground">Loading dashboard…</p>
       </div>
     );
   }
 
-  if (!profile.data?.tenant_id && !isSuper) return <OnboardTenant userId={user.id} />;
+  if (!profile.data?.tenant_id) return <OnboardTenant userId={user.id} />;
 
   const s = stats.data;
-  const greeting = profile.data?.full_name ? `, ${profile.data.full_name.split(" ")[0]}` : "";
+  const routerItems = routerDetails.data ?? [];
+  const isHealthy = s && s.routersOnline === s.routersTotal && s.openTickets === 0;
+  const greeting = profile.data.full_name ? `, ${profile.data.full_name.split(" ")[0]}` : "";
+  const systemStatusLabel = isHealthy ? "All Systems Operational" : "Attention Required";
+  const systemStatusClass = isHealthy ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/30" : "bg-amber-500/10 text-amber-700 border-amber-500/30";
+  const onlineCustomerPercent = s ? `${Math.round((s.activeSessions / Math.max(s.customers, 1)) * 1000) / 10}%` : "—";
+  const customerMetrics = [
+    { label: "New Today", value: s?.newCustomers ?? 0 },
+    { label: "Expiring Soon", value: s?.expiringSoon ?? 0 },
+    { label: "Suspended", value: s?.suspendedCustomers ?? 0 },
+    { label: "Pending Installation", value: "—" },
+    { label: "Online", value: s?.activeSessions ?? 0 },
+    { label: "Offline", value: "—" },
+    { label: "PPPoE", value: "—" },
+    { label: "Hotspot", value: "—" },
+    { label: "Fiber", value: "—" },
+  ];
+  const recentActivity = [
+    ...(recentPayments.data ?? []).slice(0, 2).map((payment) => ({
+      key: payment.id,
+      time: new Date(payment.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      title: `${payment.customers?.full_name ?? "Customer"} paid KES ${Number(payment.amount).toLocaleString()}`,
+      detail: payment.method,
+    })),
+    ...(recentTickets.data ?? []).slice(0, 2).map((ticket) => ({
+      key: ticket.id,
+      time: new Date(ticket.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      title: `Ticket ${ticket.ticket_no} opened`,
+      detail: ticket.subject,
+    })),
+    { key: "sync-1", time: "09:15", title: "Router Nairobi synchronized", detail: "Network configuration updated" },
+    { key: "voucher-1", time: "09:18", title: "Voucher redeemed", detail: "Hotspot access granted" },
+    { key: "pppoe-1", time: "09:22", title: "PPPoE user connected", detail: "New session established" },
+  ];
 
   return (
-    <div className="space-y-6 max-w-[1400px]">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            Good {timeOfDay()}{greeting} 👋
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {isSuper ? "Platform-wide overview — SmartLinkNet SaaS" : "Here's what's happening with your ISP today."}
-          </p>
+    <div className="space-y-6 w-full px-4 py-6 sm:px-6 lg:px-8">
+      <section className="relative overflow-hidden rounded-2xl border border-border/60 bg-card p-6 shadow-sm" aria-labelledby="dashboard-title">
+        <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at top left, oklch(0.72 0.16 215 / 0.08), transparent 60%)" }} />
+        <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">Good {timeOfDay()}</p>
+            <h1 id="dashboard-title" className="text-2xl font-bold tracking-tight">Dashboard{greeting}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Overview of customers, network health, and billing.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${systemStatusClass}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${isHealthy ? "bg-emerald-500" : "bg-amber-500"} animate-pulse`} />
+              {systemStatusLabel}
+            </span>
+            <div className="text-sm text-muted-foreground hidden sm:block">Branch: <span className="font-medium text-foreground">{branchName}</span></div>
+            <Link to="/billing" className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90 transition-opacity shadow-sm">Create Invoice</Link>
+          </div>
         </div>
-        <div className="hidden sm:flex gap-2">
-          <Link to="/customers" className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:opacity-90">
-            <Users className="h-3.5 w-3.5" /> Add Customer
-          </Link>
-          <Link to="/billing" className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-medium hover:bg-accent">
-            <Receipt className="h-3.5 w-3.5" /> New Payment
-          </Link>
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-labelledby="kpi-region">
+        <h2 id="kpi-region" className="sr-only">Key performance indicators</h2>
+        <StatCard loading={stats.isLoading} title="Total Customers" value={s?.customers ?? 0} delta={s?.newCustomers ? `+${s.newCustomers} this month` : undefined} icon={Users} href="/customers" accent="blue" />
+        <StatCard loading={stats.isLoading} title="Active Sessions" value={s?.activeSessions ?? 0} delta={s ? `${Math.round((s.activeSessions / Math.max(s.customers, 1)) * 100)}% online` : undefined} icon={Signal} href="/customers" accent="emerald" />
+        <StatCard loading={stats.isLoading} title="MTD Revenue" value={s ? formatCurrency(s.mtdRevenue) : null} delta={s ? `Today: ${formatCurrency(s.todayRevenue)}` : undefined} icon={DollarSign} href="/billing" accent="violet" />
+        <StatCard loading={stats.isLoading} title="Outstanding" value={s ? formatCurrency(s.outstandingAmount) : null} delta={`${s?.unpaidInvoices ?? 0} unpaid invoices`} icon={Receipt} href="/billing" accent="amber" />
+      </section>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2 space-y-6">
+          <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs uppercase tracking-widest text-muted-foreground">Revenue Trend</div>
+                <h2 className="mt-1 text-lg font-semibold">Last 7 Days</h2>
+              </div>
+              <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">7-day view</span>
+            </div>
+            <div className="mt-4 h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={revenueChart.data ?? []} margin={{ top: 6, right: 8, bottom: 6, left: 0 }}>
+                  <defs>
+                    <linearGradient id="usage-gradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.22} />
+                      <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                  <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: "var(--muted-foreground)", fontSize: 12 }} />
+                  <RTooltip contentStyle={{ borderRadius: 10, border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)" }} formatter={(value: number) => [`KES ${Number(value).toLocaleString()}`, "Revenue"]} />
+                  <Area type="monotone" dataKey="amount" stroke="#3b82f6" strokeWidth={2} fill="url(#usage-gradient)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="rounded-2xl border border-border/60 bg-card p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs uppercase tracking-widest text-muted-foreground">Recent Payments</div>
+                  <h3 className="mt-1 text-sm font-semibold">Latest transactions</h3>
+                </div>
+                <Link to="/billing" className="text-xs text-primary hover:underline">View all</Link>
+              </div>
+              <div className="mt-3 divide-y divide-border/50">
+                {(recentPayments.data ?? []).slice(0, 4).map((p) => (
+                  <div key={p.id} className="flex items-center justify-between py-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="h-7 w-7 rounded-full bg-primary/10 grid place-items-center shrink-0">
+                        <DollarSign className="h-3.5 w-3.5 text-primary" />
+                      </div>
+                      <div className="text-sm font-medium">{p.customers?.full_name ?? 'Customer'}</div>
+                    </div>
+                    <div className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">+{formatCurrency(Number(p.amount))}</div>
+                  </div>
+                ))}
+                {(recentPayments.data ?? []).length === 0 && <div className="text-sm text-muted-foreground py-4 text-center">No recent payments</div>}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-border/60 bg-card p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs uppercase tracking-widest text-muted-foreground">Invoices</div>
+                  <h3 className="mt-1 text-sm font-semibold">Recent invoices</h3>
+                </div>
+                <Link to="/billing" className="text-xs text-primary hover:underline">Manage</Link>
+              </div>
+              <div className="mt-3 divide-y divide-border/50">
+                {(recentInvoices.data ?? []).map((inv) => (
+                  <div key={inv.id} className="flex items-center justify-between py-2.5">
+                    <div className="text-sm font-medium truncate max-w-[120px]">{inv.customers?.full_name ?? 'Customer'}</div>
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                        inv.status === 'paid' ? 'bg-emerald-500/10 text-emerald-600' :
+                        inv.status === 'unpaid' ? 'bg-amber-500/10 text-amber-600' :
+                        'bg-muted text-muted-foreground'
+                      }`}>{inv.status}</span>
+                      <div className="text-sm font-semibold">{formatCurrency(Number(inv.total))}</div>
+                    </div>
+                  </div>
+                ))}
+                {(recentInvoices.data ?? []).length === 0 && <div className="text-sm text-muted-foreground py-4 text-center">No invoices</div>}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-border/60 bg-card p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs uppercase tracking-widest text-muted-foreground">Network</div>
+                <h3 className="mt-1 text-sm font-semibold">Router health</h3>
+              </div>
+              <Badge variant={isHealthy ? "secondary" : "destructive"} className="px-2 py-1 text-sm">{isHealthy ? "Healthy" : "Attention"}</Badge>
+            </div>
+            <div className="mt-3 divide-y divide-border/50">
+              {routerDetails.isLoading ? (
+                <div className="space-y-2 py-2">
+                  {[1,2,3].map(i => <div key={i} className="h-8 rounded-md bg-muted/40 animate-pulse" />)}
+                </div>
+              ) : routerItems.length === 0 ? (
+                <div className="text-sm text-muted-foreground py-4 text-center">No routers configured</div>
+              ) : (
+                routerItems.slice(0, 4).map((r) => (
+                  <div key={r.id} className="flex items-center justify-between py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className={`h-2 w-2 rounded-full shrink-0 ${r.status === "online" ? "bg-emerald-500" : "bg-amber-500"}`} />
+                      <div className="truncate text-sm font-medium">{r.name ?? r.id}</div>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      {r.cpu_load != null && <span>{r.cpu_load}% CPU</span>}
+                      <span className={`rounded-full px-2 py-0.5 font-medium ${r.status === "online" ? "bg-emerald-500/10 text-emerald-600" : "bg-amber-500/10 text-amber-600"}`}>{r.status}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border/60 bg-card p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs uppercase tracking-widest text-muted-foreground">Alerts</div>
+                <h3 className="mt-1 text-sm font-semibold">Critical items</h3>
+              </div>
+              <Link to="/noc" className="text-xs text-primary hover:underline">View all</Link>
+            </div>
+            <div className="mt-3 space-y-2">
+              {alertItems.map((alert) => (
+                <div key={`${alert.title}-${alert.label}`} className={`flex items-start gap-3 rounded-xl p-2.5 ${
+                  alert.color === "red" ? "bg-red-500/5" :
+                  alert.color === "orange" ? "bg-orange-500/5" :
+                  alert.color === "yellow" ? "bg-yellow-500/5" :
+                  "bg-emerald-500/5"
+                }`}>
+                  <div className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${alert.color === "red" ? "bg-red-500/15 text-red-600" : alert.color === "orange" ? "bg-orange-500/15 text-orange-600" : alert.color === "yellow" ? "bg-yellow-500/15 text-yellow-600" : "bg-emerald-500/15 text-emerald-600"}`}>
+                    <alert.icon className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold">{alert.title}</div>
+                    <div className="text-xs text-muted-foreground">{alert.label}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border/60 bg-card p-4">
+            <div className="text-xs uppercase tracking-widest text-muted-foreground">Recent Activity</div>
+            <div className="mt-3 divide-y divide-border/50">
+              {recentActivity.slice(0, 5).map((event) => (
+                <div key={String(event.key)} className="flex items-start gap-3 py-2.5">
+                  <div className="h-1.5 w-1.5 rounded-full bg-primary/60 mt-1.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate text-sm font-medium">{event.title}</div>
+                    <div className="text-xs text-muted-foreground truncate">{event.detail}</div>
+                  </div>
+                  <div className="text-xs text-muted-foreground shrink-0">{event.time}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
-
-      {/* Super admin */}
-      {isSuper && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <KpiCard icon={Activity} label="Total Tenants" value={superStats.data?.total ?? 0} accent />
-          <KpiCard icon={CheckCircle} label="Active Tenants" value={superStats.data?.active ?? 0} color="text-green-500" trend="+2 this month" />
-          <Link to="/admin" className="group rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 to-primary/5 p-5 hover:border-primary/50 transition flex items-center justify-between">
-            <div>
-              <div className="text-xs uppercase tracking-wide text-muted-foreground">Admin</div>
-              <div className="mt-1 font-semibold">Manage Tenants</div>
-            </div>
-            <ArrowRight className="h-5 w-5 text-primary group-hover:translate-x-1 transition-transform" />
-          </Link>
-        </div>
-      )}
-
-      {/* ISP operator KPIs */}
-      {!isSuper && tenantId && (
-        <>
-          <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-            <KpiCard icon={Users} label="Total Customers" value={s?.customers ?? 0}
-              trend={s?.newThisMonth ? `+${s.newThisMonth} this month` : undefined}
-              loading={stats.isLoading} />
-            <KpiCard icon={Signal} label="Online Now"
-              value={s ? `${s.routersOnline}/${s.routersTotal}` : "—"}
-              color={s && s.routersOnline < s.routersTotal ? "text-yellow-500" : "text-green-500"}
-              trend={s && s.routersOnline === s.routersTotal ? "All routers healthy" : `${s ? s.routersTotal - s.routersOnline : 0} offline`}
-              loading={stats.isLoading} />
-            <KpiCard icon={Wifi} label="Active Sessions" value={s?.activeSessions ?? 0}
-              color="text-blue-500" trend="Live hotspot users" loading={stats.isLoading} />
-            <KpiCard icon={DollarSign} label="Revenue MTD"
-              value={s ? `KES ${s.mtdRevenue.toLocaleString()}` : "—"}
-              color="text-green-500"
-              trend={
-                <ResponsiveContainer width="100%" height={32}>
-                  <AreaChart data={revenueChart.data ?? []} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-                    <Area type="monotone" dataKey="amount" stroke="currentColor" fill="currentColor" className="text-green-500/20 stroke-green-500" strokeWidth={1.5} />
-                    <RTooltip formatter={(v: any) => [`KES ${Number(v).toLocaleString()}`, ""]} contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 11 }} />
-                    <XAxis dataKey="day" hide />
-                  </AreaChart>
-                </ResponsiveContainer>
-              }
-              loading={stats.isLoading} />
-          </div>
-
-          {/* Secondary metrics */}
-          <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-            <MiniCard icon={Clock} label="Expiring Soon" value={s?.expiringToday ?? 0} color="text-yellow-500" href="/billing" />
-            <MiniCard icon={UserX} label="Suspended" value={s?.suspended ?? 0} color="text-red-500" href="/customers" />
-            <MiniCard icon={Ticket} label="Open Tickets" value={s?.openTickets ?? 0} color="text-blue-500" href="/support" />
-            <MiniCard icon={UserCheck} label="New This Month" value={s?.newThisMonth ?? 0} color="text-primary" href="/customers" />
-          </div>
-
-          {/* Alerts */}
-          {((s?.expiringToday ?? 0) > 0 || (s?.openTickets ?? 0) > 0) && (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {(s?.expiringToday ?? 0) > 0 && (
-                <AlertBanner icon={AlertTriangle} color="yellow" title={`${s!.expiringToday} subscription${s!.expiringToday > 1 ? "s" : ""} expiring in 3 days`}>
-                  <Link to="/billing" className="text-xs font-medium hover:underline">View billing →</Link>
-                </AlertBanner>
-              )}
-              {(s?.openTickets ?? 0) > 0 && (
-                <AlertBanner icon={Bell} color="blue" title={`${s!.openTickets} open support ticket${s!.openTickets > 1 ? "s" : ""}`}>
-                  <Link to="/support" className="text-xs font-medium hover:underline">View tickets →</Link>
-                </AlertBanner>
-              )}
-            </div>
-          )}
-
-          <div className="grid gap-6 lg:grid-cols-3">
-            {/* Revenue + Recent Payments */}
-            <div className="lg:col-span-2 space-y-4">
-              {/* 7-day chart */}
-              <div className="rounded-2xl border border-border/60 bg-card p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h2 className="font-semibold">Revenue — Last 7 Days</h2>
-                    <p className="text-xs text-muted-foreground">Daily M-Pesa collections</p>
-                  </div>
-                  <BarChart2 className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <ResponsiveContainer width="100%" height={140}>
-                  <AreaChart data={revenueChart.data ?? []} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
-                    <defs>
-                      <linearGradient id="rev-grad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="var(--color-primary)" stopOpacity={0.25} />
-                        <stop offset="95%" stopColor="var(--color-primary)" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <XAxis dataKey="day" tick={{ fontSize: 11, fill: "var(--color-muted-foreground)" }} axisLine={false} tickLine={false} />
-                    <RTooltip formatter={(v: any) => [`KES ${Number(v).toLocaleString()}`, "Revenue"]} contentStyle={{ background: "var(--color-card)", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 11 }} />
-                    <Area type="monotone" dataKey="amount" stroke="var(--color-primary)" strokeWidth={2} fill="url(#rev-grad)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Recent payments */}
-              <div className="rounded-2xl border border-border/60 bg-card p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="font-semibold">Recent Payments</h2>
-                  <Link to="/billing" className="text-xs text-primary hover:underline flex items-center gap-1">View all <ArrowRight className="h-3 w-3" /></Link>
-                </div>
-                {recentPayments.isLoading ? (
-                  <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-10 rounded-md bg-muted animate-pulse" />)}</div>
-                ) : recentPayments.data?.length === 0 ? (
-                  <EmptyState icon={Receipt} title="No payments yet" desc="Payments appear here as customers pay." />
-                ) : (
-                  <div className="space-y-1.5">
-                    {recentPayments.data?.map((p) => (
-                      <div key={p.id} className="flex items-center justify-between rounded-xl bg-muted/40 px-3 py-2.5 text-sm hover:bg-muted/70 transition">
-                        <div className="flex items-center gap-3">
-                          <div className="grid h-7 w-7 place-items-center rounded-full bg-green-500/15 text-green-600 text-xs font-bold">
-                            {((p as any).customers?.full_name ?? "?")[0]}
-                          </div>
-                          <div>
-                            <div className="font-medium text-sm leading-tight">{(p as any).customers?.full_name ?? "—"}</div>
-                            <div className="text-xs text-muted-foreground capitalize">{p.method} · {new Date(p.created_at).toLocaleDateString()}</div>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-semibold text-green-500">KES {Number(p.amount).toLocaleString()}</div>
-                          <PayStatusBadge status={p.status} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Quick Actions + Tickets */}
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-border/60 bg-card p-5">
-                <h2 className="font-semibold mb-3">Quick Actions</h2>
-                <div className="space-y-1.5">
-                  {[
-                    { to: "/customers", icon: Users, label: "Add Customer", desc: "Register new subscriber" },
-                    { to: "/billing", icon: Receipt, label: "Record Payment", desc: "Manual payment entry" },
-                    { to: "/hotspot", icon: Wifi, label: "Generate Vouchers", desc: "Hotspot voucher codes" },
-                    { to: "/support", icon: Activity, label: "New Ticket", desc: "Support request" },
-                    { to: "/packages", icon: Package, label: "Manage Plans", desc: "Internet packages" },
-                    { to: "/portal-manager", icon: Zap, label: "Captive Portal", desc: "Portal configuration" },
-                  ].map((a) => (
-                    <Link key={a.to} to={a.to as never} className="flex items-center gap-3 rounded-xl border border-border/50 px-3 py-2.5 text-sm hover:bg-accent/50 hover:border-primary/40 transition group">
-                      <div className="grid h-7 w-7 place-items-center rounded-lg bg-primary/10 text-primary shrink-0">
-                        <a.icon className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="font-medium leading-tight">{a.label}</div>
-                        <div className="text-[11px] text-muted-foreground">{a.desc}</div>
-                      </div>
-                      <ArrowRight className="h-3.5 w-3.5 ml-auto text-muted-foreground opacity-0 group-hover:opacity-100 transition" />
-                    </Link>
-                  ))}
-                </div>
-              </div>
-
-              {recentTickets.data && recentTickets.data.length > 0 && (
-                <div className="rounded-2xl border border-border/60 bg-card p-5">
-                  <div className="flex items-center justify-between mb-3">
-                    <h2 className="font-semibold text-sm">Open Tickets</h2>
-                    <Link to="/support" className="text-xs text-primary hover:underline">View all</Link>
-                  </div>
-                  <div className="space-y-2">
-                    {recentTickets.data.map((t) => (
-                      <div key={t.id} className="rounded-xl bg-muted/40 p-2.5 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="font-mono text-muted-foreground">{t.ticket_no}</span>
-                          <PriorityBadge priority={t.priority} />
-                        </div>
-                        <div className="font-medium mt-0.5 truncate">{t.subject}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Portal quick-link */}
-              <Link to="/portal-manager" className="block rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 to-transparent p-5 hover:border-primary/50 transition group">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-xs text-muted-foreground uppercase tracking-wide">Captive Portal</div>
-                    <div className="font-semibold mt-0.5">Manage Portal</div>
-                    <div className="text-xs text-muted-foreground mt-1">Branding · Packages · Payments</div>
-                  </div>
-                  <Zap className="h-6 w-6 text-primary" />
-                </div>
-              </Link>
-            </div>
-          </div>
-        </>
-      )}
     </div>
   );
 }
 
 function timeOfDay() {
-  const h = new Date().getHours();
-  if (h < 12) return "morning";
-  if (h < 17) return "afternoon";
+  const hour = new Date().getHours();
+  if (hour < 12) return "morning";
+  if (hour < 17) return "afternoon";
   return "evening";
 }
 
-function KpiCard({ icon: Icon, label, value, accent, color, loading, trend }: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string; value: string | number;
-  accent?: boolean; color?: string; loading?: boolean;
-  trend?: React.ReactNode;
-}) {
+const ACCENT_STYLES: Record<string, { card: string; icon: string; bar: string }> = {
+  blue:    { card: "border-blue-500/20",    icon: "bg-blue-500/15 text-blue-500",    bar: "bg-blue-500" },
+  emerald: { card: "border-emerald-500/20", icon: "bg-emerald-500/15 text-emerald-500", bar: "bg-emerald-500" },
+  violet:  { card: "border-violet-500/20",  icon: "bg-violet-500/15 text-violet-500",  bar: "bg-violet-500" },
+  amber:   { card: "border-amber-500/20",   icon: "bg-amber-500/15 text-amber-500",   bar: "bg-amber-500" },
+};
+
+function StatCard({ title, value, delta, icon: Icon, href, accent = "blue", loading = false }: { title: string; value: string | number | null; delta?: string; icon: ComponentType<{ className?: string }>; href: string; accent?: string; loading?: boolean; }) {
+  const a = ACCENT_STYLES[accent] ?? ACCENT_STYLES.blue;
   return (
-    <div className="rounded-2xl border border-border/60 bg-card p-5 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
-        <div className={`grid h-8 w-8 place-items-center rounded-lg ${accent ? "bg-primary/15 text-primary" : "bg-muted/60 text-muted-foreground"}`}>
+    <Link
+      to={href as never}
+      className={`group relative flex flex-col justify-between overflow-hidden rounded-2xl border bg-card p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${a.card}`}
+      aria-busy={loading}
+      aria-label={title}
+    >
+      <div className={`absolute top-0 left-0 right-0 h-0.5 ${a.bar}`} />
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">{title}</div>
+        <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${a.icon}`}>
           <Icon className="h-4 w-4" />
         </div>
       </div>
-      <div className={`text-2xl font-bold ${color ?? ""}`}>
-        {loading ? <span className="h-7 w-20 inline-block rounded-lg bg-muted animate-pulse" /> : value}
-      </div>
-      {trend && <div className="text-xs text-muted-foreground">{trend}</div>}
-    </div>
-  );
-}
-
-function MiniCard({ icon: Icon, label, value, color, href }: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string; value: number; color: string; href: string;
-}) {
-  return (
-    <Link to={href as never} className="rounded-2xl border border-border/60 bg-card p-4 flex items-center gap-3 hover:border-primary/40 transition group">
-      <div className={`grid h-9 w-9 place-items-center rounded-xl bg-current/10 shrink-0 ${color}`}>
-        <Icon className="h-4 w-4" />
-      </div>
-      <div>
-        <div className={`text-xl font-bold ${color}`}>{value}</div>
-        <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-4">
+        {loading
+          ? <span className="inline-block h-7 w-28 rounded-lg bg-muted/40 animate-pulse" />
+          : <div className="text-2xl font-bold tracking-tight text-foreground">{value ?? "—"}</div>
+        }
+        {delta && <div className="mt-1 text-xs text-muted-foreground">{delta}</div>}
       </div>
     </Link>
   );
 }
 
-function AlertBanner({ icon: Icon, color, title, children }: {
-  icon: React.ComponentType<{ className?: string }>;
-  color: "yellow" | "blue"; title: string; children: React.ReactNode;
-}) {
-  const cls = color === "yellow"
-    ? "border-yellow-500/30 bg-yellow-500/10 text-yellow-600"
-    : "border-blue-500/30 bg-blue-500/10 text-blue-600";
+function RevenueBreakdown({ label, amount }: { label: string; amount: number }) {
   return (
-    <div className={`flex items-center gap-3 rounded-xl border p-4 ${cls}`}>
-      <Icon className="h-4 w-4 shrink-0" />
-      <div>
-        <div className="font-medium text-sm">{title}</div>
-        {children}
-      </div>
+    <div className="h-full rounded-3xl border border-border/60 bg-background/50 p-4 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-sm flex flex-col justify-between">
+      <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">{label}</div>
+      <div className="mt-3 text-xl font-semibold">KES {amount.toLocaleString()}</div>
     </div>
   );
 }
 
-function EmptyState({ icon: Icon, title, desc }: { icon: React.ComponentType<{ className?: string }>; title: string; desc: string }) {
+function MiniMetric({ label, value, icon: Icon }: { label: string; value: number; icon: ComponentType<{ className?: string }> }) {
   return (
-    <div className="flex flex-col items-center justify-center py-8 text-center">
-      <div className="grid h-10 w-10 place-items-center rounded-full bg-primary/10 text-primary">
+    <div className="h-full rounded-3xl border border-border/60 bg-background/80 p-4 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-sm flex flex-col justify-between">
+      <div className="flex items-center gap-2 text-muted-foreground">
         <Icon className="h-4 w-4" />
+        <span className="text-xs uppercase tracking-[0.2em]">{label}</span>
       </div>
-      <p className="mt-3 font-medium text-sm">{title}</p>
-      <p className="mt-1 max-w-xs text-xs text-muted-foreground">{desc}</p>
+      <div className="mt-3 text-2xl font-semibold">{value}</div>
     </div>
   );
 }
 
-function PayStatusBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    completed: "bg-green-500/15 text-green-600",
-    pending: "bg-yellow-500/15 text-yellow-600",
-    failed: "bg-red-500/15 text-red-600",
-  };
-  return <span className={`rounded-full px-1.5 py-0.5 text-[10px] capitalize ${map[status] ?? "bg-muted"}`}>{status}</span>;
+function SummaryStat({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="h-full rounded-3xl border border-border/60 bg-background/80 p-4 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-sm flex flex-col justify-between">
+      <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">{title}</div>
+      <div className="mt-3 text-lg font-semibold">{value}</div>
+    </div>
+  );
 }
 
-function PriorityBadge({ priority }: { priority: string }) {
-  const map: Record<string, string> = {
-    low: "bg-blue-500/15 text-blue-600",
-    medium: "bg-yellow-500/15 text-yellow-600",
-    high: "bg-orange-500/15 text-orange-600",
-    critical: "bg-red-500/15 text-red-600",
-  };
-  return <span className={`rounded-full px-1.5 py-0.5 text-[10px] capitalize ${map[priority] ?? "bg-muted"}`}>{priority}</span>;
+function FeedItem({ time, title, detail }: { time: string; title: string; detail: string }) {
+  return (
+    <div className="h-full rounded-3xl border border-border/60 bg-background/80 p-4 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-sm flex flex-col justify-between">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-medium">{title}</div>
+        <span className="text-xs text-muted-foreground">{time}</span>
+      </div>
+      <div className="mt-2 text-sm text-muted-foreground">{detail}</div>
+    </div>
+  );
+}
+
+function SupportStat({ title, value, icon: Icon, color }: { title: string; value: number; icon: ComponentType<{ className?: string }>; color: string }) {
+  return (
+    <div className="h-full rounded-3xl border border-border/60 bg-background/80 p-4 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-sm flex flex-col justify-between">
+      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+        <Icon className="h-4 w-4" />
+        <span>{title}</span>
+      </div>
+      <div className={`mt-3 text-3xl font-semibold ${color}`}>{value}</div>
+    </div>
+  );
 }

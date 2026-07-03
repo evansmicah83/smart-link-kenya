@@ -1,5 +1,5 @@
 import { Link, useRouter, useRouterState } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { OnboardTenant } from "@/components/OnboardTenant";
 import { BrandingProvider, useBranding } from "@/lib/branding";
 import {
@@ -8,6 +8,7 @@ import {
   ChevronDown, Activity, Package, Cable, Network, Wrench,
   QrCode, Bell, Moon, Sun, Wallet, Zap, Layers, Server,
   MoreHorizontal, X, Megaphone, Globe, AlertTriangle, TrendingUp,
+  UserCircle2, KeyRound, HelpCircle, ExternalLink,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth, fetchProfile, fetchMyRoles, type AppRole, type Profile, signOut } from "@/lib/auth";
@@ -237,30 +238,19 @@ function AppShellInner({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="shrink-0 border-t border-sidebar-border p-3">
-          {tenantQuery.data ? (
-            <div className="mb-2 rounded-md bg-sidebar-accent/50 p-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Building2 className="h-3.5 w-3.5" /> Workspace
-              </div>
-              <div className="mt-0.5 truncate text-sm font-medium">{tenantQuery.data.name}</div>
-              <div className="mt-1 inline-flex rounded-full bg-primary/15 px-2 py-0.5 text-[10px] uppercase tracking-wider text-primary">
-                {tenantQuery.data.plan}
-              </div>
-            </div>
-          ) : isSuperAdmin ? (
-            <div className="mb-2 rounded-md bg-primary/10 p-3">
-              <div className="flex items-center gap-2 text-xs text-primary">
-                <ShieldCheck className="h-3.5 w-3.5" /> Super Admin
-              </div>
-              <div className="mt-1 text-sm">Platform owner</div>
-            </div>
-          ) : null}
-          <UserMenu profile={profileQuery.data ?? null} email={user?.email ?? null} onSignOut={handleSignOut} />
+          <SidebarProfileMenu
+            profile={profileQuery.data ?? null}
+            email={user?.email ?? null}
+            roles={roles}
+            tenant={tenantQuery.data ?? null}
+            isSuperAdmin={isSuperAdmin}
+            onSignOut={handleSignOut}
+          />
         </div>
       </aside>
 
       {/* Main */}
-      <div className="flex flex-1 flex-col md:pl-64 min-w-0 w-0">
+      <div className="flex flex-1 flex-col md:pl-64 min-w-0">
         {/* Outage banner */}
         {(outages.data ?? []).length > 0 && (
           <div className="flex items-center gap-3 bg-destructive/90 px-4 py-2 text-xs text-white">
@@ -300,6 +290,13 @@ function AppShellInner({ children }: { children: ReactNode }) {
               <Sun className={`h-3 w-3 text-muted-foreground transition-opacity ${darkMode ? "opacity-0" : "opacity-100"}`} />
               <Moon className={`ml-auto h-3 w-3 text-muted-foreground transition-opacity ${darkMode ? "opacity-100" : "opacity-0"}`} />
             </button>
+            <HeaderProfileMenu
+              profile={profileQuery.data ?? null}
+              email={user?.email ?? null}
+              roles={roles}
+              tenant={tenantQuery.data ?? null}
+              onSignOut={handleSignOut}
+            />
           </div>
         </header>
 
@@ -406,34 +403,196 @@ function NotificationsBell({ tenantId, userId }: { tenantId: string | null; user
   );
 }
 
-function UserMenu({ profile, email, onSignOut }: { profile: Profile | null; email: string | null; onSignOut: () => void }) {
-  const [open, setOpen] = useState(false);
-  const name = profile?.full_name ?? email ?? "Account";
+type TenantData = { id: string; name: string; slug: string; plan: string; status: string } | null;
+
+function roleLabel(roles: AppRole[]): string {
+  if (roles.includes("super_admin")) return "Super Admin";
+  if (roles.includes("isp_owner")) return "ISP Owner";
+  if (roles.includes("branch_manager")) return "Branch Manager";
+  if (roles.includes("network_engineer")) return "Network Engineer";
+  if (roles.includes("support_agent")) return "Support Agent";
+  if (roles.includes("accountant")) return "Accountant";
+  if (roles.includes("field_technician")) return "Field Technician";
+  if (roles.includes("sales_agent")) return "Sales Agent";
+  return "Member";
+}
+
+function Avatar({ name, size = "md" }: { name: string; size?: "sm" | "md" | "lg" }) {
   const initials = (name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
+  const sz = size === "sm" ? "h-7 w-7 text-[10px]" : size === "lg" ? "h-12 w-12 text-base" : "h-9 w-9 text-xs";
   return (
-    <div className="relative">
+    <div className={`grid shrink-0 place-items-center rounded-full bg-primary/20 text-primary font-bold ring-2 ring-primary/30 ${sz}`}>
+      {initials}
+    </div>
+  );
+}
+
+function ProfileDropdown({
+  profile, email, roles, tenant, isSuperAdmin = false, onSignOut, align = "bottom",
+}: {
+  profile: Profile | null; email: string | null; roles: AppRole[]; tenant: TenantData;
+  isSuperAdmin?: boolean; onSignOut: () => void; align?: "bottom" | "top";
+}) {
+  const name = profile?.full_name ?? email ?? "Account";
+  const role = roleLabel(roles);
+  const posClass = align === "top"
+    ? "bottom-full left-0 right-0 mb-2"
+    : "right-0 top-full mt-2 w-72";
+
+  return (
+    <div className={`absolute z-50 rounded-xl border border-border bg-popover shadow-2xl overflow-hidden ${posClass}`}>
+      {/* Profile header */}
+      <div className="flex items-center gap-3 px-4 py-4 bg-muted/40 border-b border-border/60">
+        <Avatar name={name} size="lg" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-semibold text-sm text-foreground">{name}</div>
+          <div className="truncate text-xs text-muted-foreground">{email}</div>
+          <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+            {isSuperAdmin && <ShieldCheck className="h-2.5 w-2.5" />}
+            {role}
+          </span>
+        </div>
+      </div>
+
+      {/* Workspace */}
+      {(tenant || isSuperAdmin) && (
+        <div className="px-4 py-3 border-b border-border/60">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">
+            <Building2 className="h-3 w-3" /> Workspace
+          </div>
+          {tenant ? (
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium">{tenant.name}</div>
+                <div className="text-xs text-muted-foreground">{tenant.slug}</div>
+              </div>
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">{tenant.plan}</span>
+            </div>
+          ) : (
+            <div className="text-sm font-medium">Platform — All Tenants</div>
+          )}
+        </div>
+      )}
+
+      {/* Menu items */}
+      <div className="py-1">
+        <Link
+          to="/my-account/" as={undefined as never}
+          className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-accent transition-colors"
+        >
+          <UserCircle2 className="h-4 w-4 text-muted-foreground" />
+          <span>My Account</span>
+        </Link>
+        <Link
+          to="/settings" as={undefined as never}
+          className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-accent transition-colors"
+        >
+          <Settings className="h-4 w-4 text-muted-foreground" />
+          <span>Settings</span>
+        </Link>
+        {isSuperAdmin && (
+          <Link
+            to="/admin" as={undefined as never}
+            className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-accent transition-colors"
+          >
+            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+            <span>Admin Panel</span>
+          </Link>
+        )}
+      </div>
+
+      {/* Sign out */}
+      <div className="border-t border-border/60 py-1">
+        <button
+          onClick={onSignOut}
+          className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+        >
+          <LogOut className="h-4 w-4" />
+          <span>Sign out</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SidebarProfileMenu({
+  profile, email, roles, tenant, isSuperAdmin, onSignOut,
+}: {
+  profile: Profile | null; email: string | null; roles: AppRole[]; tenant: TenantData;
+  isSuperAdmin: boolean; onSignOut: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const name = profile?.full_name ?? email ?? "Account";
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 rounded-md p-2 text-left hover:bg-sidebar-accent"
+        className="flex w-full items-center gap-2.5 rounded-lg p-2 text-left hover:bg-sidebar-accent transition-colors"
       >
-        <div className="grid h-8 w-8 place-items-center rounded-full bg-secondary text-secondary-foreground text-xs font-semibold">
-          {initials}
-        </div>
+        <Avatar name={name} size="sm" />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{name}</div>
-          <div className="truncate text-xs text-muted-foreground">{email}</div>
+          <div className="truncate text-sm font-semibold">{name}</div>
+          <div className="truncate text-[11px] text-muted-foreground">{roleLabel(roles)}</div>
         </div>
-        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 right-0 mb-2 rounded-md border border-border bg-popover p-1 shadow-lg">
-          <button
-            onClick={onSignOut}
-            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-accent"
-          >
-            <LogOut className="h-4 w-4" /> Sign out
-          </button>
-        </div>
+        <ProfileDropdown
+          profile={profile} email={email} roles={roles} tenant={tenant}
+          isSuperAdmin={isSuperAdmin} onSignOut={() => { setOpen(false); onSignOut(); }}
+          align="top"
+        />
+      )}
+    </div>
+  );
+}
+
+function HeaderProfileMenu({
+  profile, email, roles, tenant, onSignOut,
+}: {
+  profile: Profile | null; email: string | null; roles: AppRole[]; tenant: TenantData;
+  onSignOut: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const name = profile?.full_name ?? email ?? "Account";
+  const isSuperAdmin = roles.includes("super_admin");
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Profile menu"
+        className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-accent transition-colors"
+      >
+        <Avatar name={name} size="sm" />
+        <span className="hidden sm:block text-sm font-medium max-w-[120px] truncate">{name.split(" ")[0]}</span>
+        <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <ProfileDropdown
+          profile={profile} email={email} roles={roles} tenant={tenant}
+          isSuperAdmin={isSuperAdmin} onSignOut={() => { setOpen(false); onSignOut(); }}
+          align="bottom"
+        />
       )}
     </div>
   );
@@ -448,7 +607,6 @@ function MobileMoreSheet({
   const [open, setOpen] = useState(false);
   const navMap = Object.fromEntries(flatVisible.map((n) => [n.to, n]));
   const name = profile?.full_name ?? email ?? "Account";
-  const initials = (name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
   const isMoreActive = !["/dashboard", "/customers", "/billing", "/settings"].some(
     (t) => pathname === t || (t !== "/dashboard" && pathname.startsWith(t))
   );
@@ -522,12 +680,10 @@ function MobileMoreSheet({
 
             {/* account footer */}
             <div className="border-t border-border/60 px-4 py-3 flex items-center gap-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-secondary text-secondary-foreground text-xs font-semibold">
-                {initials}
-              </div>
+              <Avatar name={name} size="sm" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium">{name}</div>
-                <div className="truncate text-xs text-muted-foreground">{email}</div>
+                <div className="truncate text-sm font-semibold">{name}</div>
+                <div className="truncate text-xs text-muted-foreground">{roleLabel(roles)}</div>
               </div>
               <button
                 onClick={() => { setOpen(false); onSignOut(); }}

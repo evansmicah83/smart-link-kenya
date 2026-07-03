@@ -31,13 +31,26 @@ self.addEventListener("fetch", (e) => {
   e.respondWith(
     caches.match(e.request).then((cached) => {
       if (cached) return cached;
-      return fetch(e.request).then((res) => {
-        if (res.ok && e.request.url.startsWith(self.location.origin)) {
-          const clone = res.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, clone));
-        }
-        return res;
-      }).catch(() => caches.match(OFFLINE_URL));
+      return fetch(e.request)
+        .then((res) => {
+          if (res.ok && e.request.url.startsWith(self.location.origin)) {
+            const clone = res.clone();
+            caches.open(CACHE)
+              .then((c) => c.put(e.request, clone))
+              .catch(() => {});
+          }
+          return res;
+        })
+        .catch(() => {
+          const acceptHeader = e.request.headers.get("accept") || "";
+          if (e.request.mode === "navigate" || acceptHeader.includes("text/html")) {
+            return caches.match(OFFLINE_URL);
+          }
+          return new Response("Service Unavailable", {
+            status: 503,
+            statusText: "Service Unavailable",
+          });
+        });
     })
   );
 });

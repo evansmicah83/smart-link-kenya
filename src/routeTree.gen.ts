@@ -14,7 +14,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PortalIndexRouteImport } from './routes/portal/index'
-import { Route as MyAccountIndexRouteImport } from './routes/my-account/index'
+import { Route as AccountIndexRouteImport } from './routes/account/index'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
@@ -30,6 +30,7 @@ import { Route as AuthenticatedPppoeIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedPortalManagerIndexRouteImport } from './routes/_authenticated/portal-manager/index'
 import { Route as AuthenticatedPackagesIndexRouteImport } from './routes/_authenticated/packages/index'
 import { Route as AuthenticatedNocIndexRouteImport } from './routes/_authenticated/noc/index'
+import { Route as AuthenticatedMyAccountIndexRouteImport } from './routes/_authenticated/my-account/index'
 import { Route as AuthenticatedMarketingIndexRouteImport } from './routes/_authenticated/marketing/index'
 import { Route as AuthenticatedMapIndexRouteImport } from './routes/_authenticated/map/index'
 import { Route as AuthenticatedInventoryIndexRouteImport } from './routes/_authenticated/inventory/index'
@@ -64,9 +65,9 @@ const PortalIndexRoute = PortalIndexRouteImport.update({
   path: '/portal/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const MyAccountIndexRoute = MyAccountIndexRouteImport.update({
-  id: '/my-account/',
-  path: '/my-account/',
+const AccountIndexRoute = AccountIndexRouteImport.update({
+  id: '/account/',
+  path: '/account/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
@@ -154,6 +155,12 @@ const AuthenticatedNocIndexRoute = AuthenticatedNocIndexRouteImport.update({
   path: '/noc/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedMyAccountIndexRoute =
+  AuthenticatedMyAccountIndexRouteImport.update({
+    id: '/my-account/',
+    path: '/my-account/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedMarketingIndexRoute =
   AuthenticatedMarketingIndexRouteImport.update({
     id: '/marketing/',
@@ -212,7 +219,7 @@ export interface FileRoutesByFullPath {
   '/verify': typeof VerifyRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
-  '/my-account/': typeof MyAccountIndexRoute
+  '/account/': typeof AccountIndexRoute
   '/portal/': typeof PortalIndexRoute
   '/aaa/': typeof AuthenticatedAaaIndexRoute
   '/automation/': typeof AuthenticatedAutomationIndexRoute
@@ -223,6 +230,7 @@ export interface FileRoutesByFullPath {
   '/inventory/': typeof AuthenticatedInventoryIndexRoute
   '/map/': typeof AuthenticatedMapIndexRoute
   '/marketing/': typeof AuthenticatedMarketingIndexRoute
+  '/my-account/': typeof AuthenticatedMyAccountIndexRoute
   '/noc/': typeof AuthenticatedNocIndexRoute
   '/packages/': typeof AuthenticatedPackagesIndexRoute
   '/portal-manager/': typeof AuthenticatedPortalManagerIndexRoute
@@ -243,7 +251,7 @@ export interface FileRoutesByTo {
   '/verify': typeof VerifyRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
-  '/my-account': typeof MyAccountIndexRoute
+  '/account': typeof AccountIndexRoute
   '/portal': typeof PortalIndexRoute
   '/aaa': typeof AuthenticatedAaaIndexRoute
   '/automation': typeof AuthenticatedAutomationIndexRoute
@@ -254,6 +262,7 @@ export interface FileRoutesByTo {
   '/inventory': typeof AuthenticatedInventoryIndexRoute
   '/map': typeof AuthenticatedMapIndexRoute
   '/marketing': typeof AuthenticatedMarketingIndexRoute
+  '/my-account': typeof AuthenticatedMyAccountIndexRoute
   '/noc': typeof AuthenticatedNocIndexRoute
   '/packages': typeof AuthenticatedPackagesIndexRoute
   '/portal-manager': typeof AuthenticatedPortalManagerIndexRoute
@@ -276,7 +285,7 @@ export interface FileRoutesById {
   '/verify': typeof VerifyRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
-  '/my-account/': typeof MyAccountIndexRoute
+  '/account/': typeof AccountIndexRoute
   '/portal/': typeof PortalIndexRoute
   '/_authenticated/aaa/': typeof AuthenticatedAaaIndexRoute
   '/_authenticated/automation/': typeof AuthenticatedAutomationIndexRoute
@@ -287,6 +296,7 @@ export interface FileRoutesById {
   '/_authenticated/inventory/': typeof AuthenticatedInventoryIndexRoute
   '/_authenticated/map/': typeof AuthenticatedMapIndexRoute
   '/_authenticated/marketing/': typeof AuthenticatedMarketingIndexRoute
+  '/_authenticated/my-account/': typeof AuthenticatedMyAccountIndexRoute
   '/_authenticated/noc/': typeof AuthenticatedNocIndexRoute
   '/_authenticated/packages/': typeof AuthenticatedPackagesIndexRoute
   '/_authenticated/portal-manager/': typeof AuthenticatedPortalManagerIndexRoute
@@ -309,7 +319,7 @@ export interface FileRouteTypes {
     | '/verify'
     | '/admin'
     | '/dashboard'
-    | '/my-account/'
+    | '/account/'
     | '/portal/'
     | '/aaa/'
     | '/automation/'
@@ -320,6 +330,7 @@ export interface FileRouteTypes {
     | '/inventory/'
     | '/map/'
     | '/marketing/'
+    | '/my-account/'
     | '/noc/'
     | '/packages/'
     | '/portal-manager/'
@@ -340,7 +351,7 @@ export interface FileRouteTypes {
     | '/verify'
     | '/admin'
     | '/dashboard'
-    | '/my-account'
+    | '/account'
     | '/portal'
     | '/aaa'
     | '/automation'
@@ -351,6 +362,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/map'
     | '/marketing'
+    | '/my-account'
     | '/noc'
     | '/packages'
     | '/portal-manager'
@@ -372,7 +384,7 @@ export interface FileRouteTypes {
     | '/verify'
     | '/_authenticated/admin'
     | '/_authenticated/dashboard'
-    | '/my-account/'
+    | '/account/'
     | '/portal/'
     | '/_authenticated/aaa/'
     | '/_authenticated/automation/'
@@ -383,6 +395,7 @@ export interface FileRouteTypes {
     | '/_authenticated/inventory/'
     | '/_authenticated/map/'
     | '/_authenticated/marketing/'
+    | '/_authenticated/my-account/'
     | '/_authenticated/noc/'
     | '/_authenticated/packages/'
     | '/_authenticated/portal-manager/'
@@ -403,7 +416,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   VerifyRoute: typeof VerifyRoute
-  MyAccountIndexRoute: typeof MyAccountIndexRoute
+  AccountIndexRoute: typeof AccountIndexRoute
   PortalIndexRoute: typeof PortalIndexRoute
 }
 
@@ -444,11 +457,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortalIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/my-account/': {
-      id: '/my-account/'
-      path: '/my-account'
-      fullPath: '/my-account/'
-      preLoaderRoute: typeof MyAccountIndexRouteImport
+    '/account/': {
+      id: '/account/'
+      path: '/account'
+      fullPath: '/account/'
+      preLoaderRoute: typeof AccountIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/dashboard': {
@@ -556,6 +569,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedNocIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/my-account/': {
+      id: '/_authenticated/my-account/'
+      path: '/my-account'
+      fullPath: '/my-account/'
+      preLoaderRoute: typeof AuthenticatedMyAccountIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/marketing/': {
       id: '/_authenticated/marketing/'
       path: '/marketing'
@@ -634,6 +654,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedInventoryIndexRoute: typeof AuthenticatedInventoryIndexRoute
   AuthenticatedMapIndexRoute: typeof AuthenticatedMapIndexRoute
   AuthenticatedMarketingIndexRoute: typeof AuthenticatedMarketingIndexRoute
+  AuthenticatedMyAccountIndexRoute: typeof AuthenticatedMyAccountIndexRoute
   AuthenticatedNocIndexRoute: typeof AuthenticatedNocIndexRoute
   AuthenticatedPackagesIndexRoute: typeof AuthenticatedPackagesIndexRoute
   AuthenticatedPortalManagerIndexRoute: typeof AuthenticatedPortalManagerIndexRoute
@@ -661,6 +682,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedInventoryIndexRoute: AuthenticatedInventoryIndexRoute,
   AuthenticatedMapIndexRoute: AuthenticatedMapIndexRoute,
   AuthenticatedMarketingIndexRoute: AuthenticatedMarketingIndexRoute,
+  AuthenticatedMyAccountIndexRoute: AuthenticatedMyAccountIndexRoute,
   AuthenticatedNocIndexRoute: AuthenticatedNocIndexRoute,
   AuthenticatedPackagesIndexRoute: AuthenticatedPackagesIndexRoute,
   AuthenticatedPortalManagerIndexRoute: AuthenticatedPortalManagerIndexRoute,
@@ -684,7 +706,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   VerifyRoute: VerifyRoute,
-  MyAccountIndexRoute: MyAccountIndexRoute,
+  AccountIndexRoute: AccountIndexRoute,
   PortalIndexRoute: PortalIndexRoute,
 }
 export const routeTree = rootRouteImport

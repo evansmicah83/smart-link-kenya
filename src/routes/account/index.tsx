@@ -1,5 +1,5 @@
 /**
- * Customer Self-Service Portal — /my-account?token=<token>&isp=<slug>
+ * Customer Self-Service Portal — /account?token=<token>&isp=<slug>
  * Subscribers can view their plan, usage, payments, tickets and take actions.
  */
 import { createFileRoute, useSearch } from "@tanstack/react-router";
@@ -18,7 +18,7 @@ const searchSchema = z.object({
   isp: z.string().optional(),
 });
 
-export const Route = createFileRoute("/my-account/")({
+export const Route = createFileRoute("/account/")(  {
   ssr: false,
   validateSearch: (s) => searchSchema.parse(s),
   component: CustomerPortal,
@@ -52,7 +52,7 @@ function speedLabel(kbps: number) {
 }
 
 function CustomerPortal() {
-  const { token, isp } = useSearch({ from: "/my-account/" });
+  const { token, isp } = useSearch({ from: "/account/" });
   const [tab, setTab] = useState<Tab>("overview");
   const [brand, setBrand] = useState<Brand>({});
   const [customer, setCustomer] = useState<Customer | null>(null);
