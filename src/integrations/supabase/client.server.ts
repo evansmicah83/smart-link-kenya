@@ -13,7 +13,12 @@ function createSupabaseAdminClient() {
       ...(!SUPABASE_URL ? ['SUPABASE_URL'] : []),
       ...(!SUPABASE_SERVICE_ROLE_KEY ? ['SUPABASE_SERVICE_ROLE_KEY'] : []),
     ];
-    throw new Error(`Missing Supabase environment variable(s): ${missing.join(', ')}`);
+    // Log a clear message on the server and attach the missing list to the thrown error
+    console.error(`Missing Supabase environment variable(s): ${missing.join(', ')}`);
+    const err = new Error(`Missing Supabase environment variable(s): ${missing.join(', ')}`);
+    // attach metadata so server-side error handlers can render a helpful page
+    (err as any).missing = missing;
+    throw err;
   }
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
