@@ -178,6 +178,26 @@
   color: transparent;
 }
 
+@utility auth-input {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-background);
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--color-foreground);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+@layer base {
+  .auth-input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px oklch(0.72 0.16 215 / 0.15);
+  }
+}
+
 /* ── Portal / Captive Portal utilities ────────────────────────── */
 @layer base {
   /* Smooth brand color transitions when branding is applied */

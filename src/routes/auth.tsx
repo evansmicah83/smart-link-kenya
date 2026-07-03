@@ -4,11 +4,12 @@ import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
 import { toast } from "sonner";
-import { Wifi, Loader2, ArrowLeft } from "lucide-react";
+import { Wifi, Loader2, ArrowLeft, Eye, EyeOff, CheckCircle2, Shield, Zap, Users } from "lucide-react";
 
 const searchSchema = z.object({
   mode: z.enum(["signin", "signup"]).optional(),
   redirect: z.string().optional(),
+  plan: z.string().optional(),
 });
 
 export const Route = createFileRoute("/auth")({
@@ -24,6 +25,20 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
+// Kenya-themed ISP/tech images from Unsplash
+const BG_IMAGES = [
+  "https://images.unsplash.com/photo-1611348586804-61bf6c080437?w=1200&q=80", // Nairobi skyline night
+  "https://images.unsplash.com/photo-1580060839134-75a5edca2e99?w=1200&q=80", // Africa tech/network
+  "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=1200&q=80", // Network cables/ISP
+];
+
+const FEATURES = [
+  { icon: Zap, text: "M-Pesa STK Push billing — automated & instant" },
+  { icon: Wifi, text: "MikroTik & PPPoE provisioning in one click" },
+  { icon: Users, text: "Full CRM, ticketing & field ops for your team" },
+  { icon: Shield, text: "Multi-tenant, role-based, RLS-secured platform" },
+];
+
 function AuthPage() {
   const navigate = useNavigate();
   const search = Route.useSearch();
@@ -31,12 +46,15 @@ function AuthPage() {
   const [mode, setMode] = useState<"signin" | "signup">(search.mode ?? "signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
   const [fullName, setFullName] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
-  const plan = (Route.useSearch() as any)?.plan;
+  const [bgIndex, setBgIndex] = useState(0);
+  useEffect(() => { setBgIndex(Math.floor(Math.random() * BG_IMAGES.length)); }, []);
+  const plan = search.plan;
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -63,13 +81,10 @@ function AuthPage() {
           },
         });
         if (error) throw error;
-        // If user returned (signup succeeded), send OTP for phone verification and navigate to verify page
         const userId = (data as any)?.user?.id;
         if (userId) {
           try {
-            await supabase.functions.invoke("signup-send-otp", {
-              body: { userId, email, phone },
-            });
+            await supabase.functions.invoke("signup-send-otp", { body: { userId, email, phone } });
           } catch (e) {
             console.warn("signup-send-otp failed:", e);
           }
@@ -88,8 +103,7 @@ function AuthPage() {
         navigate({ to: "/dashboard" });
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Authentication failed";
-      toast.error(msg);
+      toast.error(err instanceof Error ? err.message : "Authentication failed");
     } finally {
       setLoading(false);
     }
@@ -101,10 +115,7 @@ function AuthPage() {
       const result = await lovable.auth.signInWithOAuth("google", {
         redirect_uri: `${window.location.origin}/dashboard`,
       });
-      if (result.error) {
-        toast.error(result.error.message ?? "Google sign-in failed");
-        return;
-      }
+      if (result.error) { toast.error(result.error.message ?? "Google sign-in failed"); return; }
       if (result.redirected) return;
       navigate({ to: "/dashboard" });
     } finally {
@@ -113,118 +124,221 @@ function AuthPage() {
   }
 
   return (
-    <div className="min-h-screen gradient-hero flex items-center justify-center px-4 py-8">
-      <div className="w-full max-w-4xl">
-        <div className="mb-6 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-md bg-primary text-primary-foreground">
+    <div className="min-h-screen flex bg-background">
+      {/* ── Left panel — hero image + features ── */}
+      <div className="relative hidden lg:flex lg:w-[55%] xl:w-[60%] flex-col overflow-hidden">
+        {/* Background image */}
+        <img
+          src={BG_IMAGES[bgIndex]}
+          alt="Kenya ISP"
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+        {/* Dark overlay gradient */}
+        <div className="absolute inset-0 bg-gradient-to-br from-black/80 via-black/60 to-primary/40" />
+
+        {/* Content */}
+        <div className="relative z-10 flex flex-col h-full p-10 xl:p-14">
+          {/* Logo */}
+          <Link to="/" className="flex items-center gap-3 w-fit">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground shadow-lg">
               <Wifi className="h-5 w-5" />
             </div>
-            <span className="text-lg font-semibold">SmartLink<span className="text-primary">Net</span></span>
+            <span className="text-xl font-bold text-white tracking-tight">
+              SmartLink<span className="text-primary">Net</span>
+            </span>
           </Link>
-          <div className="flex items-center gap-3">
-            <Link to="/" className="rounded-md px-3 py-2 text-sm hover:bg-accent inline-flex items-center gap-2">
-              <ArrowLeft className="h-4 w-4" /> Back
-            </Link>
+
+          {/* Hero text */}
+          <div className="mt-auto mb-10">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs text-white/80 backdrop-blur-sm mb-6">
+              <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
+              Built for Kenyan ISPs · M-Pesa Native · MikroTik Ready
+            </div>
+            <h1 className="text-4xl xl:text-5xl font-bold text-white leading-tight tracking-tight">
+              The operating system<br />
+              <span className="text-primary">for internet providers</span>
+            </h1>
+            <p className="mt-4 text-base text-white/70 max-w-md leading-relaxed">
+              Manage hotspots, PPPoE, fiber, billing, CRM, inventory, support and field ops — all from one secure cloud platform.
+            </p>
+
+            {/* Feature list */}
+            <div className="mt-8 grid grid-cols-1 gap-3 max-w-md">
+              {FEATURES.map(({ icon: Icon, text }) => (
+                <div key={text} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 backdrop-blur-sm px-4 py-3">
+                  <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary/20 text-primary">
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <span className="text-sm text-white/85">{text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Stats bar */}
+          <div className="grid grid-cols-3 gap-4 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm p-5">
+            {[
+              { value: "500+", label: "ISPs onboarded" },
+              { value: "99.9%", label: "Uptime SLA" },
+              { value: "M-Pesa", label: "Native payments" },
+            ].map((s) => (
+              <div key={s.label} className="text-center">
+                <div className="text-xl font-bold text-white">{s.value}</div>
+                <div className="text-xs text-white/60 mt-0.5">{s.label}</div>
+              </div>
+            ))}
           </div>
         </div>
+      </div>
 
-        <div className="grid gap-8 rounded-2xl border border-border/60 bg-card/80 p-6 shadow-lg md:grid-cols-2 md:p-0">
-          <div className="hidden flex-col gap-4 p-8 md:flex">
-            <div className="rounded-lg bg-primary/10 p-6">
-              <h2 className="text-2xl font-semibold">{mode === 'signup' ? 'Create your ISP account' : 'Welcome back'}</h2>
-              <p className="mt-2 text-sm text-muted-foreground">{mode === 'signup' ? 'Start your 14-day SmartLinkNet trial and configure M-Pesa, SMS and email.' : 'Sign in to your ISP dashboard'}</p>
+      {/* ── Right panel — form ── */}
+      <div className="flex flex-1 flex-col min-h-screen overflow-y-auto">
+        {/* Mobile top bar */}
+        <div className="flex items-center justify-between px-6 py-4 lg:hidden border-b border-border/60">
+          <Link to="/" className="flex items-center gap-2">
+            <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-foreground">
+              <Wifi className="h-4 w-4" />
             </div>
-            {mode === 'signup' && (
-              <div className="mt-4 rounded-lg border border-border/60 bg-background/50 p-4">
-                <div className="text-sm text-muted-foreground">Selected plan</div>
-                <div className="mt-1 text-lg font-semibold">{plan ? plan.toString().toUpperCase() : 'Starter'}</div>
-                <div className="mt-2 text-sm text-muted-foreground">You can change this later in billing settings.</div>
+            <span className="font-bold text-sm">SmartLink<span className="text-primary">Net</span></span>
+          </Link>
+          <Link to="/" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="h-4 w-4" /> Back
+          </Link>
+        </div>
+
+        {/* Desktop back link */}
+        <div className="hidden lg:flex items-center justify-end px-10 pt-6">
+          <Link to="/" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+            <ArrowLeft className="h-4 w-4" /> Back to home
+          </Link>
+        </div>
+
+        {/* Form container */}
+        <div className="flex flex-1 items-center justify-center px-6 py-8 lg:px-12 xl:px-16">
+          <div className="w-full max-w-md">
+
+            {/* Heading */}
+            <div className="mb-8">
+              <h2 className="text-2xl font-bold tracking-tight">
+                {mode === "signin" ? "Welcome back 👋" : "Create your account"}
+              </h2>
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                {mode === "signin"
+                  ? "Sign in to your ISP dashboard to continue"
+                  : `Start your 14-day free trial${plan ? ` on the ${plan.charAt(0).toUpperCase() + plan.slice(1)} plan` : ""}`}
+              </p>
+            </div>
+
+            {/* Plan badge (signup only) */}
+            {mode === "signup" && plan && (
+              <div className="mb-6 flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
+                <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
+                <div>
+                  <div className="text-xs text-muted-foreground">Selected plan</div>
+                  <div className="text-sm font-semibold capitalize">{plan} — 14-day free trial</div>
+                </div>
               </div>
             )}
-            <div className="mt-auto text-xs text-muted-foreground">Trusted by Kenyan ISPs · M-Pesa ready · MikroTik integrations</div>
-          </div>
 
-          <div className="p-6 md:p-8">
-            <div className="space-y-3">
-              <h1 className="text-2xl font-semibold">{mode === "signin" ? "Welcome back" : "Create your account"}</h1>
-              <p className="text-sm text-muted-foreground">{mode === "signin" ? "Sign in to your ISP dashboard" : "Start your 14-day SmartLinkNet trial"}</p>
-            </div>
-
+            {/* Google OAuth */}
             <button
               onClick={handleGoogle}
               disabled={oauthLoading}
-              className="mt-6 flex w-full items-center justify-center gap-2 rounded-md border border-input bg-background/50 px-4 py-2.5 text-sm font-medium hover:bg-accent disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm font-medium shadow-sm hover:bg-accent transition-colors disabled:opacity-50"
             >
               {oauthLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <GoogleIcon />}
               Continue with Google
             </button>
 
+            {/* Divider */}
             <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
               <div className="h-px flex-1 bg-border" />
-              <span>or with email</span>
+              <span>or continue with email</span>
               <div className="h-px flex-1 bg-border" />
             </div>
 
+            {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-4">
               {mode === "signup" && (
                 <>
                   <Field label="Full name">
                     <input
                       required value={fullName} onChange={(e) => setFullName(e.target.value)}
-                      className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
-                      placeholder="Jane Wanjiru"
+                      className="auth-input" placeholder="Jane Wanjiru"
                     />
                   </Field>
                   <Field label="Company / ISP name">
                     <input
                       required value={companyName} onChange={(e) => setCompanyName(e.target.value)}
-                      className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
-                      placeholder="SwiftNet Limited"
+                      className="auth-input" placeholder="SwiftNet Limited"
                     />
                   </Field>
                   <Field label="Contact phone">
                     <input
                       required value={phone} onChange={(e) => setPhone(e.target.value)}
-                      className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
-                      placeholder="+254 712 345 678"
+                      className="auth-input" placeholder="+254 712 345 678" type="tel"
                     />
                   </Field>
                 </>
               )}
-              <Field label="Email">
+
+              <Field label="Email address">
                 <input
                   type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
-                  placeholder="Email"
+                  className="auth-input" placeholder="Email"
                 />
               </Field>
+
               <Field label="Password">
-                <input
-                  type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm outline-none focus:border-primary"
-                  placeholder="Password"
-                />
+                <div className="relative">
+                  <input
+                    type={showPw ? "text" : "password"} required minLength={8}
+                    value={password} onChange={(e) => setPassword(e.target.value)}
+                    className="auth-input pr-10" placeholder="Password"
+                  />
+                  <button
+                    type="button" onClick={() => setShowPw((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </Field>
+
               <button
                 disabled={loading}
-                className="mt-2 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50"
               >
                 {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-                {mode === "signin" ? "Sign in" : "Create account"}
+                {mode === "signin" ? "Sign in to dashboard" : "Create account — it's free"}
               </button>
             </form>
 
+            {/* Toggle mode */}
             <p className="mt-6 text-center text-sm text-muted-foreground">
-              {mode === "signin" ? "No account yet? " : "Already have an account? "}
+              {mode === "signin" ? "Don't have an account? " : "Already have an account? "}
               <button
                 onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-                className="font-medium text-primary hover:underline"
+                className="font-semibold text-primary hover:underline"
               >
-                {mode === "signin" ? "Create one" : "Sign in"}
+                {mode === "signin" ? "Sign up free" : "Sign in"}
               </button>
             </p>
+
+            {/* Trust badges */}
+            <div className="mt-8 flex items-center justify-center gap-4 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1"><Shield className="h-3 w-3" /> SSL secured</span>
+              <span className="h-3 w-px bg-border" />
+              <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> No credit card</span>
+              <span className="h-3 w-px bg-border" />
+              <span className="flex items-center gap-1"><Zap className="h-3 w-3" /> M-Pesa ready</span>
+            </div>
           </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 text-center text-xs text-muted-foreground border-t border-border/40">
+          © {new Date().getFullYear()} SmartLinkNet · Made in Nairobi 🇰🇪
         </div>
       </div>
     </div>
@@ -233,8 +347,8 @@ function AuthPage() {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-medium text-muted-foreground">{label}</span>
+    <label className="block space-y-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
       {children}
     </label>
   );
@@ -242,7 +356,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function GoogleIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden>
+    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden>
       <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.4 29.3 35.5 24 35.5c-6.4 0-11.5-5.1-11.5-11.5S17.6 12.5 24 12.5c2.9 0 5.6 1.1 7.6 2.9l5.7-5.7C33.6 6.4 29 4.5 24 4.5 13.2 4.5 4.5 13.2 4.5 24S13.2 43.5 24 43.5 43.5 34.8 43.5 24c0-1.2-.1-2.4-.3-3.5z"/>
       <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 16 18.9 12.5 24 12.5c2.9 0 5.6 1.1 7.6 2.9l5.7-5.7C33.6 6.4 29 4.5 24 4.5 16.3 4.5 9.7 8.9 6.3 14.7z"/>
       <path fill="#4CAF50" d="M24 43.5c5.2 0 9.8-1.8 13.3-4.8l-6.1-5c-2 1.4-4.4 2.3-7.2 2.3-5.3 0-9.7-3.4-11.3-8.1l-6.5 5C9.5 39 16.2 43.5 24 43.5z"/>
