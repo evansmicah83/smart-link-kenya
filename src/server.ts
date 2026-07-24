@@ -20,7 +20,7 @@ function buildProvisionScript(slug: string) {
     `/system identity set name=\"${identity}\"`,
     `:local bridgeName \"${bridgeName}\"`,
     `:if ([:len [/interface bridge find name=\$bridgeName]] = 0) do={/interface bridge add name=\$bridgeName comment=\"SmartLinkNet auto-provisioned\"}`,
-    `:if ([:len [/interface bridge port find bridge=\$bridgeName interface=ether2]] = 0) do={/interface bridge port add bridge=\$bridgeName interface=ether2}`,
+    `:if ([:len [/interface bridge port find interface=ether2]] = 0) do={/interface bridge port add bridge=\$bridgeName interface=ether2}`,
     `:if ([:len [/ip address find interface=\$bridgeName]] = 0) do={/ip address add address=172.31.0.1/16 interface=\$bridgeName comment=\"SmartLinkNet default subnet\"}`,
     `:if ([:len [/ip pool find name=\$bridgeName]] = 0) do={/ip pool add name=\$bridgeName ranges=172.31.0.2-172.31.0.254}`,
     `:if ([:len [/ip dhcp-server find name=\$bridgeName]] = 0) do={/ip dhcp-server add name=\$bridgeName interface=\$bridgeName address-pool=\$bridgeName lease-time=12h}`,
