@@ -71,18 +71,13 @@ function createSupabaseClient() {
       storage: isServer ? undefined : localStorage,
       persistSession: !isServer,
       autoRefreshToken: !isServer,
-    }
+      detectSessionInUrl: !isServer,
+      flowType: 'pkce',
+    },
   });
 }
 
-// Use separate instances for server and client to avoid stale closures
-const _instances: { server?: ReturnType<typeof createSupabaseClient>; client?: ReturnType<typeof createSupabaseClient> } = {};
-
-export const supabase = new Proxy({} as ReturnType<typeof createSupabaseClient>, {
-  get(_, prop, receiver) {
-    const key = typeof window === 'undefined' ? 'server' : 'client';
-    if (!_instances[key]) _instances[key] = createSupabaseClient();
-    return Reflect.get(_instances[key]!, prop, receiver);
-  },
-});
+// Single instance per environment — never recreated to avoid duplicate GoTrueClient warnings
+const isServer = typeof window === 'undefined';
+export const supabase = createSupabaseClient();
 

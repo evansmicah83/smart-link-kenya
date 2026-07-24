@@ -10,6 +10,7 @@ const searchSchema = z.object({
   mode: z.enum(["signin", "signup"]).optional(),
   redirect: z.string().optional(),
   plan: z.string().optional(),
+  reason: z.enum(["idle", "expired"]).optional(),
 });
 
 export const Route = createFileRoute("/auth")({
@@ -53,10 +54,25 @@ function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
   const [bgIndex, setBgIndex] = useState(0);
+  const [attempts, setAttempts] = useState(0);
+  const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
+  const [lockoutSeconds, setLockoutSeconds] = useState(0);
   useEffect(() => { setBgIndex(Math.floor(Math.random() * BG_IMAGES.length)); }, []);
   const plan = search.plan;
+  const reason = search.reason;
 
   useEffect(() => { setMounted(true); }, []);
+
+  // Lockout countdown
+  useEffect(() => {
+    if (!lockoutUntil) return;
+    const tick = setInterval(() => {
+      const secs = Math.ceil((lockoutUntil - Date.now()) / 1000);
+      if (secs <= 0) { setLockoutUntil(null); setLockoutSeconds(0); clearInterval(tick); }
+      else setLockoutSeconds(secs);
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [lockoutUntil]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -98,9 +114,17 @@ function AuthPage() {
         }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        if (error) {
+          const next = attempts + 1;
+          setAttempts(next);
+          // Progressive lockout: 3 fails = 30s, 5 fails = 120s
+          if (next >= 5) setLockoutUntil(Date.now() + 120_000);
+          else if (next >= 3) setLockoutUntil(Date.now() + 30_000);
+          throw error;
+        }
+        setAttempts(0);
         toast.success("Signed in");
-        navigate({ to: "/dashboard" });
+        navigate({ to: search.redirect ?? "/dashboard" });
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Authentication failed");
@@ -217,6 +241,28 @@ function AuthPage() {
         <div className="flex flex-1 items-center justify-center px-6 py-8 lg:px-12 xl:px-16">
           <div className="w-full max-w-md">
 
+            {/* Idle / expired session banner */}
+            {reason === "idle" && (
+              <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-600 dark:text-amber-400">
+                <Shield className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>You were signed out after 30 minutes of inactivity. Please sign in again.</span>
+              </div>
+            )}
+            {reason === "expired" && (
+              <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-400">
+                <Shield className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>Your session expired. Please sign in again to continue.</span>
+              </div>
+            )}
+
+            {/* Lockout banner */}
+            {lockoutUntil && lockoutSeconds > 0 && (
+              <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-400">
+                <Shield className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>Too many failed attempts. Try again in <strong>{lockoutSeconds}s</strong>.</span>
+              </div>
+            )}
+
             {/* Heading */}
             <div className="mb-8">
               <h2 className="text-2xl font-bold tracking-tight">
@@ -306,11 +352,13 @@ function AuthPage() {
               </Field>
 
               <button
-                disabled={loading}
+                disabled={loading || (!!lockoutUntil && lockoutSeconds > 0)}
                 className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50"
               >
                 {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-                {mode === "signin" ? "Sign in to dashboard" : "Create account — it's free"}
+                {lockoutUntil && lockoutSeconds > 0
+                  ? `Try again in ${lockoutSeconds}s`
+                  : mode === "signin" ? "Sign in to dashboard" : "Create account — it's free"}
               </button>
             </form>
 
