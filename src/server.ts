@@ -2,7 +2,7 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
-import { supabase } from "./integrations/supabase/client";
+import { supabaseAdmin } from "./integrations/supabase/client.server";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -25,7 +25,7 @@ async function markRouterOnline(slug: string, request: Request) {
 
     if (!routerName) return;
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("routers")
       .select("id")
       .ilike("name", routerName)
@@ -34,7 +34,7 @@ async function markRouterOnline(slug: string, request: Request) {
     if (error || !data?.[0]?.id) return;
 
     const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-    await supabase
+    await supabaseAdmin
       .from("routers")
       .update({
         status: "online",
