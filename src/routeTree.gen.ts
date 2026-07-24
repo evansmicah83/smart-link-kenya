@@ -15,6 +15,7 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PortalIndexRouteImport } from './routes/portal/index'
 import { Route as AccountIndexRouteImport } from './routes/account/index'
+import { Route as ProvisionSlugRouteImport } from './routes/provision.$slug'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
@@ -68,6 +69,11 @@ const PortalIndexRoute = PortalIndexRouteImport.update({
 const AccountIndexRoute = AccountIndexRouteImport.update({
   id: '/account/',
   path: '/account/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProvisionSlugRoute = ProvisionSlugRouteImport.update({
+  id: '/provision/$slug',
+  path: '/provision/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
@@ -219,6 +225,7 @@ export interface FileRoutesByFullPath {
   '/verify': typeof VerifyRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/provision/$slug': typeof ProvisionSlugRoute
   '/account/': typeof AccountIndexRoute
   '/portal/': typeof PortalIndexRoute
   '/aaa/': typeof AuthenticatedAaaIndexRoute
@@ -251,6 +258,7 @@ export interface FileRoutesByTo {
   '/verify': typeof VerifyRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/provision/$slug': typeof ProvisionSlugRoute
   '/account': typeof AccountIndexRoute
   '/portal': typeof PortalIndexRoute
   '/aaa': typeof AuthenticatedAaaIndexRoute
@@ -285,6 +293,7 @@ export interface FileRoutesById {
   '/verify': typeof VerifyRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/provision/$slug': typeof ProvisionSlugRoute
   '/account/': typeof AccountIndexRoute
   '/portal/': typeof PortalIndexRoute
   '/_authenticated/aaa/': typeof AuthenticatedAaaIndexRoute
@@ -319,6 +328,7 @@ export interface FileRouteTypes {
     | '/verify'
     | '/admin'
     | '/dashboard'
+    | '/provision/$slug'
     | '/account/'
     | '/portal/'
     | '/aaa/'
@@ -351,6 +361,7 @@ export interface FileRouteTypes {
     | '/verify'
     | '/admin'
     | '/dashboard'
+    | '/provision/$slug'
     | '/account'
     | '/portal'
     | '/aaa'
@@ -384,6 +395,7 @@ export interface FileRouteTypes {
     | '/verify'
     | '/_authenticated/admin'
     | '/_authenticated/dashboard'
+    | '/provision/$slug'
     | '/account/'
     | '/portal/'
     | '/_authenticated/aaa/'
@@ -416,6 +428,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   VerifyRoute: typeof VerifyRoute
+  ProvisionSlugRoute: typeof ProvisionSlugRoute
   AccountIndexRoute: typeof AccountIndexRoute
   PortalIndexRoute: typeof PortalIndexRoute
 }
@@ -462,6 +475,13 @@ declare module '@tanstack/react-router' {
       path: '/account'
       fullPath: '/account/'
       preLoaderRoute: typeof AccountIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/provision/$slug': {
+      id: '/provision/$slug'
+      path: '/provision/$slug'
+      fullPath: '/provision/$slug'
+      preLoaderRoute: typeof ProvisionSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/dashboard': {
@@ -706,6 +726,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   VerifyRoute: VerifyRoute,
+  ProvisionSlugRoute: ProvisionSlugRoute,
   AccountIndexRoute: AccountIndexRoute,
   PortalIndexRoute: PortalIndexRoute,
 }
