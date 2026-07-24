@@ -167,6 +167,7 @@ function RoutersPage() {
   const [bridgePort, setBridgePort] = useState<"ether1" | "ether2">("ether2");
   const [customSubnet, setCustomSubnet] = useState(false);
   const [subnetValue, setSubnetValue] = useState("172.31.0.0/16");
+  const selectedServices = useMemo(() => [hotspot && "hotspot", pppoe && "pppoe"].filter(Boolean) as string[], [hotspot, pppoe]);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<"all" | "online" | "offline">("all");
   const [search, setSearch] = useState("");
@@ -261,7 +262,7 @@ function RoutersPage() {
     setApplyDone(false);
     setLogLines([]);
 
-    const services = [hotspot && "Hotspot", pppoe && "PPPoE"].filter(Boolean).join(", ");
+    const services = selectedServices.map((service) => service === "hotspot" ? "Hotspot" : "PPPoE").join(", ");
     const lines = [
       "[queued] Starting device configuration...",
       "[connect] Connecting to device API...",
@@ -275,9 +276,11 @@ function RoutersPage() {
       if (index >= lines.length) {
         if (routerId) {
           await supabase.from("routers").update({
-            services: [pppoe && "pppoe", hotspot && "hotspot"].filter(Boolean),
+            services: selectedServices,
             bridge_port: bridgePort,
             subnet: customSubnet ? subnetValue : "172.31.0.0/16",
+            provisioning_identity: identity.trim(),
+            provisioning_slug: `${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`,
           } as any).eq("id", routerId);
         }
         setApplyDone(true);
@@ -603,7 +606,7 @@ function RoutersPage() {
               {([
                 { label: "Router", value: identity, orange: false },
                 { label: "VPN address", value: vpnAddress ?? "—", orange: false },
-                { label: "Services", value: [hotspot && "Hotspot", pppoe && "PPPoE"].filter(Boolean).join(", ") || "—", orange: false },
+                { label: "Services", value: selectedServices.map((service) => service === "hotspot" ? "Hotspot" : "PPPoE").join(", ") || "—", orange: false },
                 { label: "Ports", value: bridgePort, orange: false },
                 { label: "Status", value: applyDone ? "done" : "running", orange: !applyDone },
               ] as { label: string; value: string; orange: boolean }[]).map((row, i) => (
