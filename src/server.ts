@@ -24,7 +24,7 @@ function buildProvisionScript(slug: string) {
     `:if ([:len [/ip address find interface=\$bridgeName]] = 0) do={/ip address add address=172.31.0.1/16 interface=\$bridgeName comment=\"SmartLinkNet default subnet\"}`,
     `:if ([:len [/ip pool find name=\$bridgeName]] = 0) do={/ip pool add name=\$bridgeName ranges=172.31.0.2-172.31.0.254}`,
     `:if ([:len [/ip dhcp-server find name=\$bridgeName]] = 0) do={/ip dhcp-server add name=\$bridgeName interface=\$bridgeName address-pool=\$bridgeName lease-time=12h}`,
-    `:if ([:len [/ip dhcp-server network find address=172.31.0.0/16]] = 0) do={/ip dhcp-server network add address=172.31.0.0/16 gateway=172.31.0.1 dns-server=8.8.8.8,1.1.1.1}`,
+    `:if ([:len [/ip dhcp-server network find where address="172.31.0.0/16"]] = 0) do={/ip dhcp-server network add address=172.31.0.0/16 gateway=172.31.0.1 dns-server=8.8.8.8,1.1.1.1}`,
     `/ip service disable api`,
     `/ip service disable ftp`,
     "# End of SmartLinkNet provisioning script",
