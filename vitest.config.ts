@@ -16,6 +16,7 @@ export default defineConfig({
     environment: "node",
     include: [
       "src/lib/aaa2/__tests__/**/*.test.ts",
+      "src/lib/provisioning/**/*.test.ts",
       "src/lib/provisioning3/__tests__/**/*.test.ts",
       "src/lib/network/__tests__/**/*.test.ts",
     ],

@@ -9,6 +9,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { adapterFactory } from "../adapters/factory";
 import { recordProvisioningEvent } from "./telemetry";
+import { inferServiceTypeFromPackage } from "@/lib/provisioning/templates";
 import type {
   RouterRef,
   CustomerRef,
@@ -194,12 +195,19 @@ export class AuthService {
   ): Promise<void> {
     if (!subscription.router_id) return;
 
+    const packageRecord = subscription.package_id
+      ? await supabase.from("packages").select("id,type").eq("id", subscription.package_id).maybeSingle()
+      : { data: null };
+    const normalizedServiceType = inferServiceTypeFromPackage(
+      packageRecord.data?.type ?? null,
+      (subscription.type as ServiceType | null) ?? null,
+    ) as ServiceType;
     const bandwidthPolicy = subscription.package_id ? await resolveBandwidthPolicy(subscription.package_id) : null;
     const creds: NetworkCredentials = {
       username: subscription.username,
       password: subscription.password ?? subscription.username,
       profile: subscription.profile ?? null,
-      serviceType: (subscription.type as ServiceType) ?? "pppoe",
+      serviceType: normalizedServiceType,
       rateLimit: bandwidthPolicy,
       poolName: subscription.pool_name ?? null,
       vlanId: null,
@@ -216,7 +224,7 @@ export class AuthService {
       routerRef: subscription.router_id,
       event: "provisioned",
       username: subscription.username,
-      serviceType: (subscription.type as ServiceType) ?? "pppoe",
+      serviceType: normalizedServiceType,
     });
   }
 

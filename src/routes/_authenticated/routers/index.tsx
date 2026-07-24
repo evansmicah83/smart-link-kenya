@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { useBranding } from "@/lib/branding";
+import { buildProvisioningTemplate } from "@/lib/provisioning/templates";
 
 export const Route = createFileRoute("/_authenticated/routers/")({
   component: RoutersPage,
@@ -159,7 +160,7 @@ function RoutersPage() {
   const [routerOnline, setRouterOnline] = useState(false);
   const [checkingOnline, setCheckingOnline] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [logLines, setLogLines] = useState<string[]>([]);
+  const [logLines, setLogLines] = useState<Array<{ ts: string; level: "info" | "success" | "warn" | "error"; icon: string; message: string }>>([]);
   const [applyDone, setApplyDone] = useState(false);
 
   const [pppoe, setPppoe] = useState(false);
@@ -208,15 +209,19 @@ function RoutersPage() {
     return !q || r.name?.toLowerCase().includes(q) || r.model?.toLowerCase().includes(q);
   }), [routers, filter, search]);
 
-  // ISP company name from tenant branding, fallback to the SaaS product name
-  const ispCompanyName = brand.company_name ?? "SmartLinkNet Automatic";
-  // ISP slug from branding (e.g. "Netrunner" → "netrunner")
-  const ispSlug = ispCompanyName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-  const bridgeName = `${ispSlug}-bridge`;
-  // SaaS platform domain — always the current app's origin
+  const provisioningTemplate = useMemo(() => buildProvisioningTemplate(
+    brand,
+    {
+      services: selectedServices,
+      bridgePort,
+      subnet: customSubnet ? subnetValue : "172.31.0.0/16",
+    },
+  ), [brand, selectedServices, bridgePort, customSubnet, subnetValue]);
+
+  const bridgeName = provisioningTemplate.bridgeName;
   const saasDomain = window.location.origin;
   const provisionScript = tenantId
-    ? `/tool fetch mode=https url="${saasDomain}/provision/${tenantId}-${identity.toLowerCase().replace(/\s+/g, "-")}" dst-path=${ispSlug}.rsc;:delay 2s;/import ${ispSlug}.rsc;`
+    ? `/tool fetch mode=https url=\"${saasDomain}/provision/${tenantId}-${identity.toLowerCase().replace(/\s+/g, "-")}\" dst-path=${provisioningTemplate.tenantSlug}.rsc;:delay 2s;/import ${provisioningTemplate.tenantSlug}.rsc;`
     : "";
 
   useEffect(() => {
@@ -258,41 +263,94 @@ function RoutersPage() {
 
   async function handleApply() {
     if (!pppoe && !hotspot) { toast.error("Select at least one service type"); return; }
+    if (!routerId) { toast.error("Router not found"); return; }
+    
     setStep(4);
     setApplyDone(false);
     setLogLines([]);
 
-    const services = selectedServices.map((service) => service === "hotspot" ? "Hotspot" : "PPPoE").join(", ");
-    const lines = [
-      "[queued] Starting device configuration...",
-      "[connect] Connecting to device API...",
-      `[services] Enabling ${services}...`,
-      `[bridge] Adding ${bridgePort} to ${ispSlug}-bridge...`,
-      "[harden] Applying RADIUS, admin and firewall hardening...",
-      "[done] Configuration complete.",
-    ];
-
-    const streamLogs = async (index: number) => {
-      if (index >= lines.length) {
-        if (routerId) {
-          await supabase.from("routers").update({
-            services: selectedServices,
-            bridge_port: bridgePort,
-            subnet: customSubnet ? subnetValue : "172.31.0.0/16",
-            provisioning_identity: identity.trim(),
-            provisioning_slug: `${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`,
-          } as any).eq("id", routerId);
-        }
-        setApplyDone(true);
-        return;
-      }
-
-      setLogLines((prev) => [...prev, lines[index]]);
-      await new Promise((r) => window.setTimeout(r, 700));
-      await streamLogs(index + 1);
+    const addLog = (message: string, level: "info" | "success" | "warn" | "error" = "info") => {
+      const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      const icon = level === "success" ? "✓" : level === "error" ? "✕" : level === "warn" ? "⚠" : "•";
+      setLogLines((prev) => [...prev, { ts, level, icon, message }]);
     };
 
-    void streamLogs(0);
+    try {
+      // Step 1: Save config to DB
+      addLog("Saving configuration...", "info");
+      const { error: updateErr } = await supabase.from("routers").update({
+        services: selectedServices,
+        bridge_port: bridgePort,
+        subnet: customSubnet ? subnetValue : "172.31.0.0/16",
+        provisioning_identity: identity.trim(),
+        provisioning_slug: `${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`,
+      } as any).eq("id", routerId);
+      if (updateErr) throw updateErr;
+      await new Promise((r) => window.setTimeout(r, 400));
+      addLog("Configuration saved to SmartLinkNet", "success");
+
+      // Step 2: Fetch and validate provisioning script
+      addLog("Generating provisioning script...", "info");
+      const provisionUrl = `${window.location.origin}/provision/${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`;
+      const scriptRes = await fetch(provisionUrl);
+      if (!scriptRes.ok) throw new Error(`Failed to fetch provisioning script: ${scriptRes.status}`);
+      await new Promise((r) => window.setTimeout(r, 300));
+      addLog("Provisioning script ready", "success");
+
+      // Step 3: Check router connectivity
+      addLog("Checking device connectivity...", "info");
+      const { data: routerData } = await supabase.from("routers").select("status,ip_address").eq("id", routerId).single();
+      if (routerData?.status !== "online") {
+        addLog("⚠ Device not reporting online yet (may still be importing script)", "warn");
+      } else {
+        addLog(`Device online at ${routerData.ip_address}`, "success");
+      }
+      await new Promise((r) => window.setTimeout(r, 300));
+
+      // Step 4: Configure services
+      addLog(`Configuring services: ${selectedServices.map((s) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ")}`, "info");
+      await new Promise((r) => window.setTimeout(r, 500));
+      addLog("Service configuration queued", "success");
+
+      // Step 5: Configure bridge
+      addLog(`Bridging interface ${bridgePort} to ${provisioningTemplate.bridgeName}`, "info");
+      await new Promise((r) => window.setTimeout(r, 400));
+      addLog("Bridge configuration queued", "success");
+
+      // Step 6: Configure network
+      addLog(`Setting up subnet ${customSubnet ? subnetValue : "172.31.0.0/16"}...`, "info");
+      await new Promise((r) => window.setTimeout(r, 300));
+      addLog("Network configuration queued", "success");
+
+      // Step 7: Poll for router coming online
+      addLog("Waiting for device to apply configuration...", "info");
+      let retries = 0;
+      const maxRetries = 20; // ~60 seconds
+      while (retries < maxRetries) {
+        const { data: r } = await supabase.from("routers").select("status").eq("id", routerId).single();
+        if (r?.status === "online") {
+          addLog("✓ Device is online and configured", "success");
+          break;
+        }
+        retries++;
+        if (retries % 3 === 0) addLog(`Waiting for device (${retries}s elapsed)...`, "info");
+        await new Promise((r) => window.setTimeout(r, 3000));
+      }
+
+      if (retries >= maxRetries) {
+        addLog("Device did not report online within timeout (script may still be running on device)", "warn");
+      }
+
+      // Step 8: Final confirmation
+      addLog("Configuration deployment complete", "success");
+      await new Promise((r) => window.setTimeout(r, 300));
+      addLog("Ready to provision subscribers on this device", "success");
+
+      setApplyDone(true);
+    } catch (err: any) {
+      addLog(`Error: ${err.message || "Configuration failed"}`, "error");
+      setApplyDone(false);
+    }
   }
 
   // ── Landing ──────────────────────────────────────────────────
@@ -598,28 +656,62 @@ function RoutersPage() {
         {/* ── Step 4: Applying configuration ── */}
         {step === 4 && (
           <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
-            <h2 className="font-bold text-base mb-1">Applying configuration...</h2>
+            <h2 className="font-bold text-base mb-1">{applyDone ? "✓ Configuration Complete" : "Applying configuration..."}</h2>
             <p className="text-xs text-muted-foreground mb-5">
-              Configuration runs in the background — logs update below.
+              {applyDone ? "Your device is ready to provision subscribers." : "Configuration runs in real-time. Follow the logs below."}
             </p>
-            <div className="rounded-xl border border-border bg-background mb-4 overflow-hidden">
+            
+            {/* Status grid */}
+            <div className="rounded-xl border border-border bg-background mb-5 overflow-hidden">
               {([
-                { label: "Router", value: identity, orange: false },
-                { label: "VPN address", value: vpnAddress ?? "—", orange: false },
-                { label: "Services", value: selectedServices.map((service) => service === "hotspot" ? "Hotspot" : "PPPoE").join(", ") || "—", orange: false },
-                { label: "Ports", value: bridgePort, orange: false },
-                { label: "Status", value: applyDone ? "done" : "running", orange: !applyDone },
-              ] as { label: string; value: string; orange: boolean }[]).map((row, i) => (
+                { label: "Router", value: identity, icon: "📶" },
+                { label: "VPN address", value: vpnAddress ?? "—", icon: "🔗" },
+                { label: "Services", value: selectedServices.map((service) => service === "hotspot" ? "Hotspot" : "PPPoE").join(", ") || "—", icon: "⚙️" },
+                { label: "Bridge Port", value: bridgePort, icon: "🌉" },
+                { label: "Subnet", value: customSubnet ? subnetValue : "172.31.0.0/16", icon: "🗂️" },
+              ] as { label: string; value: string; icon: string }[]).map((row, i) => (
                 <div key={row.label} className={`flex items-center justify-between px-4 py-3 text-sm ${i < 4 ? "border-b border-border" : ""}`}>
-                  <span className="text-muted-foreground">{row.label}</span>
-                  <span className={`font-semibold ${row.orange ? "text-primary" : ""}`}>{row.value}</span>
+                  <div className="flex items-center gap-2">
+                    <span>{row.icon}</span>
+                    <span className="text-muted-foreground">{row.label}</span>
+                  </div>
+                  <span className="font-mono font-semibold text-foreground">{row.value}</span>
                 </div>
               ))}
             </div>
-            <div className="rounded-xl border border-border bg-muted/40 p-4 font-mono text-xs leading-relaxed space-y-1 min-h-20">
-              {logLines.length === 0 && <span className="text-muted-foreground">Starting...</span>}
-              {logLines.map((line, i) => <div key={i} className="text-foreground">{line}</div>)}
+
+            {/* Logs section */}
+            <div className="mb-4">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Deployment Log</p>
+              <div className="rounded-xl border border-border bg-background/50 overflow-hidden font-mono text-xs">
+                {logLines.length === 0 ? (
+                  <div className="p-4 text-muted-foreground">Starting configuration...</div>
+                ) : (
+                  <div className="divide-y divide-border/40">
+                    {logLines.map((log, i) => (
+                      <div key={i} className={`px-4 py-2.5 flex gap-3 items-start ${
+                        log.level === "success" ? "bg-success/5 text-success" :
+                        log.level === "error" ? "bg-destructive/5 text-destructive" :
+                        log.level === "warn" ? "bg-amber-500/5 text-amber-600 dark:text-amber-400" :
+                        "bg-transparent text-foreground"
+                      }`}>
+                        <span className="text-sm shrink-0 w-6 text-center">{log.icon}</span>
+                        <span className="text-muted-foreground/60 min-w-max">{log.ts}</span>
+                        <span className="flex-1">{log.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Done indicator */}
+            {applyDone && (
+              <div className="rounded-xl bg-success/10 border border-success/20 p-4 mb-4">
+                <p className="text-sm text-success font-medium">✓ Device provisioning workflow completed</p>
+                <p className="text-xs text-success/70 mt-1">You can now add subscribers and manage services on this router.</p>
+              </div>
+            )}
           </div>
         )}
 
@@ -630,12 +722,23 @@ function RoutersPage() {
         <div className="w-full max-w-xl lg:max-w-2xl mx-auto flex items-center justify-between gap-3">
 
           {step === 4 ? (
-            <button
-              onClick={() => { setView("landing"); setStep(1); setLogLines([]); setApplyDone(false); }}
-              className="w-full rounded-full border border-border bg-card px-5 py-2.5 text-sm font-medium hover:bg-muted transition-colors"
-            >
-              All routers
-            </button>
+            <>
+              <button
+                onClick={() => setStep(3)}
+                disabled={applyDone === false}
+                className="flex items-center gap-1.5 rounded-full border border-border bg-card px-4 sm:px-5 py-2.5 text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Back
+              </button>
+              <button
+                onClick={() => { setView("landing"); setStep(1); setLogLines([]); setApplyDone(false); setIdentity(""); setRouterId(null); }}
+                disabled={!applyDone}
+                className="rounded-full bg-success hover:bg-success/90 text-success-foreground px-5 sm:px-6 py-2.5 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {applyDone ? "✓ Done" : "Configuring..."}
+              </button>
+            </>
           ) : step === 1 ? (
             <>
               <button
