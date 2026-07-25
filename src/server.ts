@@ -146,8 +146,8 @@ async function buildProvisionScript(slug: string, origin: string) { // origin pa
   const hasPPPoE = services.includes("pppoe");
   const hasHotspot = services.includes("hotspot");
 
-  // Use a variable for escaped quote to avoid rolldown SSR parser issues
-  const q = '\\"';
+  // Plain quote for RouterOS .rsc files — no escaping needed
+  const q = '"';
 
   const ifLen = (cmd: string, body: string) => ":if ([:len [" + cmd + "]] = 0) do={" + body + "}";
 
@@ -159,22 +159,22 @@ async function buildProvisionScript(slug: string, origin: string) { // origin pa
   s += "# Date: " + new Date().toISOString() + "\r\n";
   s += "\r\n";
   s += "# --- System Configuration ---\r\n";
-  s += "/system identity set name=" + q + identity + q + "\r\n";
+  s += "/system identity set name=\"" + identity + "\"\r\n";
   s += "\r\n";
   s += "# --- Bridge & Network Infrastructure ---\r\n";
-  s += ":local bridgeName " + q + template.bridgeName + q + "\r\n";
-  s += ifLen("/interface bridge find name=\\$bridgeName", "/interface bridge add name=\\$bridgeName comment=" + q + template.tenantSlug + " auto-provisioned" + q) + "\r\n";
-  s += ifLen("/interface bridge port find interface=" + template.bridgePort, "/interface bridge port add bridge=\\$bridgeName interface=" + template.bridgePort) + "\r\n";
-  s += ifLen("/ip address find interface=\\$bridgeName", "/ip address add address=" + networkAddress + "/" + prefixLength + " interface=\\$bridgeName comment=" + q + template.tenantSlug + " default subnet" + q) + "\r\n";
-  s += ifLen("/ip pool find name=\\$bridgeName", "/ip pool add name=\\$bridgeName ranges=" + poolRange) + "\r\n";
-  s += ifLen("/ip dhcp-server find name=\\$bridgeName", "/ip dhcp-server add name=\\$bridgeName interface=\\$bridgeName address-pool=\\$bridgeName lease-time=12h") + "\r\n";
-  s += ifLen("/ip dhcp-server network find where address=" + q + template.subnet + q, "/ip dhcp-server network add address=" + template.subnet + " gateway=" + gateway + " dns-server=8.8.8.8,1.1.1.1") + "\r\n";
+  s += ":local bridgeName \"" + template.bridgeName + "\"\r\n";
+  s += ifLen("/interface bridge find name=$bridgeName", "/interface bridge add name=$bridgeName comment=\"" + template.tenantSlug + " auto-provisioned\"") + "\r\n";
+  s += ifLen("/interface bridge port find interface=" + template.bridgePort, "/interface bridge port add bridge=$bridgeName interface=" + template.bridgePort) + "\r\n";
+  s += ifLen("/ip address find interface=$bridgeName", "/ip address add address=" + networkAddress + "/" + prefixLength + " interface=$bridgeName comment=\"" + template.tenantSlug + " default subnet\"") + "\r\n";
+  s += ifLen("/ip pool find name=$bridgeName", "/ip pool add name=$bridgeName ranges=" + poolRange) + "\r\n";
+  s += ifLen("/ip dhcp-server find name=$bridgeName", "/ip dhcp-server add name=$bridgeName interface=$bridgeName address-pool=$bridgeName lease-time=12h") + "\r\n";
+  s += ifLen("/ip dhcp-server network find where address=\"" + template.subnet + "\"", "/ip dhcp-server network add address=" + template.subnet + " gateway=" + gateway + " dns-server=8.8.8.8,1.1.1.1") + "\r\n";
   s += "\r\n";
 
   if (hasPPPoE) {
     s += "# --- PPPoE Server Configuration ---\r\n";
     s += "# PPPoE server for broadband subscriber connections\r\n";
-    s += ifLen("/interface pppoe-server server find interface=\\$bridgeName", "/interface pppoe-server server add interface=\\$bridgeName service-name=" + q + template.tenantSlug + q + " authentication=mschap2,mschap1,chap,pap disabled=no") + "\r\n";
+    s += ifLen("/interface pppoe-server server find interface=$bridgeName", "/interface pppoe-server server add interface=$bridgeName service-name=\"" + template.tenantSlug + "\" authentication=mschap2,mschap1,chap,pap disabled=no") + "\r\n";
     s += "# PPPoE users are managed via RADIUS or User Manager\r\n";
     s += "\r\n";
   }
@@ -182,16 +182,16 @@ async function buildProvisionScript(slug: string, origin: string) { // origin pa
   if (hasHotspot) {
     s += "# --- Hotspot (Captive Portal) Configuration ---\r\n";
     s += "# RADIUS server for hotspot auth (points back to SmartLinkNet)\r\n";
-    s += ":local radiusSecret " + q + "SmartLinkNet-Public-Fallback" + q + "\r\n";
-    s += ":local radiusHost " + q + origin.replace(/^https?:\/\//, "").split("/")[0] + q + "\r\n";
+    s += ":local radiusSecret \"SmartLinkNet-Public-Fallback\"\r\n";
+    s += ":local radiusHost \"" + origin.replace(/^https?:\/\//, "").split("/")[0] + "\"\r\n";
     s += "/radius remove [find service=hotspot]\r\n";
-    s += "/radius add service=hotspot address=\\$radiusHost secret=\\$radiusSecret authentication-port=1812 accounting-port=1813 timeout=3000ms\r\n";
+    s += "/radius add service=hotspot address=$radiusHost secret=$radiusSecret authentication-port=1812 accounting-port=1813 timeout=3000ms\r\n";
     s += "\r\n";
     s += "# Hotspot profile with RADIUS auth\r\n";
-    s += ifLen("/ip hotspot profile find name=" + q + template.tenantSlug + "-profile" + q, "/ip hotspot profile add name=" + q + template.tenantSlug + "-profile" + q + " use-radius=yes login-by=http-chap,http-pap,https,mac-cookie hotspot-address=" + gateway + " dns-name=" + q + template.tenantSlug + ".hotspot" + q) + "\r\n";
+    s += ifLen("/ip hotspot profile find name=\"" + template.tenantSlug + "-profile\"", "/ip hotspot profile add name=\"" + template.tenantSlug + "-profile\" use-radius=yes login-by=http-chap,http-pap,https,mac-cookie hotspot-address=" + gateway + " dns-name=\"" + template.tenantSlug + ".hotspot\"") + "\r\n";
     s += "\r\n";
     s += "# Enable Hotspot on bridge interface\r\n";
-    s += ifLen("/ip hotspot find interface=\\$bridgeName", "/ip hotspot add name=" + q + template.tenantSlug + "-hotspot" + q + " interface=\\$bridgeName address-pool=\\$bridgeName profile=" + q + template.tenantSlug + "-profile" + q + " disabled=no") + "\r\n";
+    s += ifLen("/ip hotspot find interface=$bridgeName", "/ip hotspot add name=\"" + template.tenantSlug + "-hotspot\" interface=$bridgeName address-pool=$bridgeName profile=\"" + template.tenantSlug + "-profile\" disabled=no") + "\r\n";
     s += "\r\n";
     s += "# Hotspot users created via /ip hotspot user or User Manager API\r\n";
     s += "\r\n";
@@ -206,8 +206,8 @@ async function buildProvisionScript(slug: string, origin: string) { // origin pa
   s += "/ip service enable ssh\r\n";
   s += "\r\n";
   s += "# --- Registration & Health Check ---\r\n";
-  s += ":local notifyUrl " + q + notifyUrl + q + "\r\n";
-  s += "/tool fetch mode=https url=\\$notifyUrl keep-result=no\r\n";
+  s += ":local notifyUrl \"" + notifyUrl + "\"\r\n";
+  s += "/tool fetch mode=https url=$notifyUrl keep-result=no\r\n";
   s += "\r\n";
   s += "# --- End of SmartLinkNet Provisioning ---\r\n";
 
