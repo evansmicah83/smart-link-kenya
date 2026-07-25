@@ -140,6 +140,8 @@ async function markRouterOnline(slug: string, request: Request) {
         protocol:     "mschapv2",
         is_primary:   true,
         is_active:    true,
+        is_healthy:   true,
+        last_checked: new Date().toISOString(),
         timeout_ms:   3000,
         retry_count:  3,
         priority:     1,
