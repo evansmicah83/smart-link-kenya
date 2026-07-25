@@ -181,34 +181,35 @@ export class RadiusServerPoolService {
       : "degraded";
 
     await (supabase as any).from("radius_servers").update({
-      is_healthy:           isHealthy,
-      last_checked:         now(),
-      latency_ms:           latencyMs,
-      consecutive_failures: consecutiveFailures,
-      last_failure_reason:  failureReason ?? null,
-      updated_at:           now(),
+      is_healthy:   isHealthy,
+      last_checked: now(),
+      updated_at:   now(),
     }).eq("id", serverId);
 
     // Persist health check snapshot
-    await (supabase as any).from("radius_health_checks").insert({
-      tenant_id:   current.tenantId,
-      server_id:   serverId,
-      is_healthy:  isHealthy,
-      latency_ms:  latencyMs,
-      status,
-      error:       failureReason ?? null,
-      checked_at:  now(),
-    }).catch(() => {});
+    await Promise.resolve(
+      (supabase as any).from("radius_health_checks").insert({
+        tenant_id:   current.tenantId,
+        server_id:   serverId,
+        is_healthy:  isHealthy,
+        latency_ms:  latencyMs,
+        status,
+        error:       failureReason ?? null,
+        checked_at:  now(),
+      })
+    ).catch(() => {});
 
     // Alert if server went unhealthy
     if (!isHealthy && consecutiveFailures === 3) {
-      await (supabase as any).from("job_queue").insert({
-        tenant_id:  current.tenantId,
-        type:       "notify_admin",
-        payload:    { event: "radius.server_unhealthy", server_id: serverId, server_name: current.name, reason: failureReason },
-        priority:   1,
-        queue_name: "notifications",
-      }).catch(() => {});
+      await Promise.resolve(
+        (supabase as any).from("job_queue").insert({
+          tenant_id:  current.tenantId,
+          type:       "notify_admin",
+          payload:    { event: "radius.server_unhealthy", server_id: serverId, server_name: current.name, reason: failureReason },
+          priority:   1,
+          queue_name: "notifications",
+        })
+      ).catch(() => {});
     }
   }
 
