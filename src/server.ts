@@ -93,27 +93,32 @@ async function markRouterOnline(slug: string, request: Request) {
 
     // Auto-upsert NAS device so AAA page reflects real router data
     if (tenantId && routerId) {
-      await supabaseAdmin
-        .from("nas_devices")
-        .upsert({
-          tenant_id: tenantId,
-          router_id: routerId,
-          name: routerName,
-          vendor: "mikrotik",
-          nas_identifier: routerName,
-          nas_ip: forwardedFor ?? null,
-          shared_secret: "SmartLinkNet-Public-Fallback",
-          auth_port: 1812,
-          acct_port: 1813,
-          coa_port: 3799,
-          is_active: true,
-          dynamic_profile_enabled: true,
-          dynamic_vlan_enabled: false,
-          dynamic_ip_enabled: false,
-          last_seen: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        } as any, { onConflict: "router_id" })
-        .catch(() => {});
+      const nasPayload = {
+        tenant_id: tenantId,
+        router_id: routerId,
+        name: routerName,
+        vendor: "mikrotik",
+        nas_identifier: routerName,
+        nas_ip: forwardedFor ?? null,
+        shared_secret: "SmartLinkNet-Public-Fallback",
+        auth_port: 1812,
+        acct_port: 1813,
+        coa_port: 3799,
+        is_active: true,
+        dynamic_profile_enabled: true,
+        dynamic_vlan_enabled: false,
+        dynamic_ip_enabled: false,
+        last_seen: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      // Try update first (router_id already exists), then insert
+      const { data: existing } = await supabaseAdmin
+        .from("nas_devices").select("id").eq("router_id", routerId).maybeSingle();
+      if (existing?.id) {
+        await supabaseAdmin.from("nas_devices").update(nasPayload).eq("id", existing.id);
+      } else {
+        await supabaseAdmin.from("nas_devices").insert(nasPayload);
+      }
     }
   } catch (error) {
     console.error("Failed to mark router online", error);
