@@ -2,10 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect, useRef, useMemo } from "react";
 import {
   RefreshCw, ChevronLeft, AlertTriangle,
-  Check, Search, Copy, Plus,
+  Check, Search, Copy, Plus, Edit2, Trash2, RotateCw, X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { useBranding } from "@/lib/branding";
@@ -179,6 +179,15 @@ function RoutersPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<"all" | "online" | "offline">("all");
   const [search, setSearch] = useState("");
+   
+  // Edit modal state
+  const [editingRouter, setEditingRouter] = useState<any | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editModel, setEditModel] = useState("");
+  const [deletingRouter, setDeletingRouter] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState<Set<string>>(new Set());
+   
+  const queryClient = useQueryClient();
 
   const tenantQuery = useQuery({
     queryKey: ["tenant-id", user?.id],
@@ -388,6 +397,59 @@ function RoutersPage() {
     }
   }
 
+  async function handleEditRouter() {
+    if (!editingRouter || !editName.trim()) {
+      toast.error("Router name is required");
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from("routers").update({
+        name: editName.trim(),
+        model: editModel.trim() || null,
+      }).eq("id", editingRouter.id);
+
+      if (error) throw error;
+
+      toast.success("Router updated successfully");
+      setEditingRouter(null);
+      queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update router");
+    }
+  }
+
+  async function handleDeleteRouter(routerId: string) {
+    try {
+      const { error } = await supabase.from("routers").delete().eq("id", routerId);
+      if (error) throw error;
+
+      toast.success("Router deleted successfully");
+      setDeletingRouter(null);
+      queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete router");
+    }
+  }
+
+  async function handleSyncRouter(routerId: string) {
+    setSyncing((prev) => new Set([...prev, routerId]));
+    try {
+      // Trigger a DB refresh to get latest status
+      await new Promise((r) => window.setTimeout(r, 1000));
+      queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
+      toast.success("Router synced");
+    } catch (err: any) {
+      toast.error("Failed to sync router");
+    } finally {
+      setSyncing((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(routerId);
+        return newSet;
+      });
+    }
+  }
+
   // ── Landing ──────────────────────────────────────────────────
   if (view === "landing") {
     return (
@@ -477,41 +539,200 @@ function RoutersPage() {
 
           {/* Table */}
           <div className="rounded-2xl border border-border bg-card overflow-hidden">
-            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 sm:gap-x-6 px-4 py-2.5 border-b border-border">
-              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">ROUTER</span>
-              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">STATUS</span>
-              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">SESSIONS</span>
-              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">WINB</span>
+            {/* Desktop Header */}
+            <div className="hidden sm:grid grid-cols-[1.5fr_1fr_1fr_auto] gap-x-4 px-6 py-3 border-b border-border bg-muted/30">
+              <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Router</span>
+              <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Status</span>
+              <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Services</span>
+              <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest text-center">Actions</span>
             </div>
 
             {routersQuery.isLoading ? (
-              <div className="px-4 py-10 text-center text-sm text-muted-foreground">Loading...</div>
+              <div className="px-6 py-12 text-center">
+                <div className="flex justify-center mb-3"><RefreshCw className="w-5 h-5 text-primary animate-spin" /></div>
+                <p className="text-sm text-muted-foreground">Loading routers...</p>
+              </div>
             ) : filtered.length === 0 ? (
-              <div className="px-4 py-10 text-center text-sm text-muted-foreground">No routers found.</div>
+              <div className="px-6 py-12 text-center">
+                <p className="text-sm text-muted-foreground">No routers found.</p>
+              </div>
             ) : (
-              filtered.map((r) => (
-                <div key={r.id} className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 sm:gap-x-6 items-center px-4 py-3.5 border-b border-border last:border-0">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-sm truncate">{r.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{r.model ?? "RouterOS"}</p>
+              <div className="divide-y divide-border">
+                {filtered.map((r) => (
+                  <div
+                    key={r.id}
+                    className="grid sm:grid-cols-[1.5fr_1fr_1fr_auto] gap-4 sm:gap-4 p-4 sm:p-6 hover:bg-muted/50 transition-colors"
+                  >
+                    {/* Mobile: Full width info */}
+                    <div className="sm:hidden">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-sm text-foreground truncate">{r.name}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{r.model ?? "RouterOS"}</p>
+                        </div>
+                        <span className={`text-xs font-medium px-2.5 py-1 rounded-full border whitespace-nowrap ml-2
+                          ${r.status === "online"
+                            ? "text-success border-success/40 bg-success/10"
+                            : "text-destructive border-destructive/40 bg-destructive/10"
+                          }`}>
+                          {r.status === "online" ? "Online" : "Offline"}
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground mb-3">
+                        <p>Services: {r.services?.join(", ") || "Not configured"}</p>
+                      </div>
+                    </div>
+
+                    {/* Desktop: Columns */}
+                    <div className="hidden sm:block min-w-0">
+                      <p className="font-semibold text-sm text-foreground truncate">{r.name}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{r.model ?? "RouterOS"}</p>
+                    </div>
+
+                    <div className="hidden sm:flex items-center">
+                      <span className={`text-xs font-medium px-3 py-1.5 rounded-full border whitespace-nowrap
+                        ${r.status === "online"
+                          ? "text-success border-success/40 bg-success/10"
+                          : "text-destructive border-destructive/40 bg-destructive/10"
+                        }`}>
+                        {r.status === "online" ? "🟢 Online" : "🔴 Offline"}
+                      </span>
+                    </div>
+
+                    <div className="hidden sm:block">
+                      <p className="text-sm text-foreground">{r.services?.map((s) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ") || "—"}</p>
+                    </div>
+
+                    {/* Actions - visible on all screens */}
+                    <div className="flex items-center gap-1.5 sm:justify-end">
+                      <button
+                        onClick={() => {
+                          setEditingRouter(r);
+                          setEditName(r.name || "");
+                          setEditModel(r.model || "");
+                        }}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+                        title="Edit router"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Edit</span>
+                      </button>
+                      <button
+                        onClick={() => handleSyncRouter(r.id)}
+                        disabled={syncing.has(r.id)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+                        title="Sync router status"
+                      >
+                        <RotateCw className={`w-3.5 h-3.5 ${syncing.has(r.id) ? "animate-spin" : ""}`} />
+                        <span className="hidden sm:inline">Sync</span>
+                      </button>
+                      <button
+                        onClick={() => setDeletingRouter(r.id)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive hover:bg-destructive/20 transition-colors"
+                        title="Delete router"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Delete</span>
+                      </button>
+                    </div>
                   </div>
-                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full border whitespace-nowrap
-                    ${r.status === "online"
-                      ? "text-success border-success/40 bg-success/10"
-                      : "text-destructive border-destructive/40 bg-destructive/10"
-                    }`}>
-                    {r.status === "online" ? "Online" : "Offline"}
-                  </span>
-                  <span className="text-sm text-center">0</span>
-                  <span className="text-sm text-primary">winb</span>
-                </div>
-              ))
+                ))}
+              </div>
             )}
 
             {!routersQuery.isLoading && (
               <p className="text-center text-xs text-muted-foreground py-3">All routers loaded.</p>
             )}
           </div>
+
+          {/* Edit Modal */}
+          {editingRouter && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <div className="bg-card rounded-2xl border border-border p-6 w-full max-w-md">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold">Edit Router</h3>
+                  <button
+                    onClick={() => setEditingRouter(null)}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-4 mb-6">
+                  <div>
+                    <label className="block text-sm font-semibold mb-2">Router Name</label>
+                    <input
+                      type="text"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                      placeholder="e.g., ISP-HQ-Router-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold mb-2">Model (Optional)</label>
+                    <input
+                      type="text"
+                      value={editModel}
+                      onChange={(e) => setEditModel(e.target.value)}
+                      className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                      placeholder="e.g., hAP ac2"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setEditingRouter(null)}
+                    className="flex-1 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-medium hover:bg-muted transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleEditRouter}
+                    className="flex-1 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium hover:bg-primary/90 transition-colors"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Delete Confirmation */}
+          {deletingRouter && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <div className="bg-card rounded-2xl border border-border p-6 w-full max-w-md">
+                <div className="flex items-start gap-4 mb-6">
+                  <div className="flex-shrink-0 w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center">
+                    <AlertTriangle className="w-6 h-6 text-destructive" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-lg font-bold mb-1">Delete Router?</h3>
+                    <p className="text-sm text-muted-foreground">
+                      This will permanently delete this router and all associated configuration. This action cannot be undone.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setDeletingRouter(null)}
+                    className="flex-1 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-medium hover:bg-muted transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleDeleteRouter(deletingRouter)}
+                    className="flex-1 rounded-lg bg-destructive text-destructive-foreground px-4 py-2.5 text-sm font-medium hover:bg-destructive/90 transition-colors"
+                  >
+                    Delete Router
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
