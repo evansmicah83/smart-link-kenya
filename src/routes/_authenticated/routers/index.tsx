@@ -191,7 +191,8 @@ function RoutersPage() {
   const [reprovisioning, setReprovisioning] = useState<string | null>(null);
   const [viewingRouter, setViewingRouter] = useState<any | null>(null);
   const [viewTab, setViewTab] = useState<"details" | "scripts" | "diagnostics">("details");
-    
+  const [serverIp, setServerIp] = useState<string>("");
+     
   const queryClient = useQueryClient();
 
   const tenantQuery = useQuery({
@@ -291,6 +292,36 @@ function RoutersPage() {
       logsEndRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }, [logLines]);
+
+  // Fetch server IP when View Router modal opens
+  useEffect(() => {
+    if (!viewingRouter) return;
+     
+    // Try to get from environment variable first
+    const envIp = import.meta.env.VITE_SERVER_IP;
+    if (envIp) {
+      setServerIp(envIp);
+      return;
+    }
+
+    // Otherwise, try to resolve from current domain
+    // For now, use a placeholder and let user know to set env var
+    const domain = window.location.hostname;
+     
+    // Attempt DNS resolution via a simple fetch to a service
+    fetch(`https://dns.google/resolve?name=${domain}&type=A`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.Answer && data.Answer.length > 0) {
+          const ip = data.Answer.find((a: any) => a.type === 1)?.data;
+          if (ip) setServerIp(ip);
+        }
+      })
+      .catch(() => {
+        // If DNS resolution fails, use environment variable or default
+        setServerIp(import.meta.env.VITE_SERVER_IP || "");
+      });
+  }, [viewingRouter]);
 
   // Poll DB every 3s on step 2 waiting for router to come online
   useEffect(() => {
@@ -891,11 +922,11 @@ function RoutersPage() {
                           <h3 className="font-semibold text-sm">Fallback RADIUS (Public)</h3>
                           <button
                             onClick={() => {
-                              const serverIp = "142.93.39.55"; // Placeholder - replace with actual IP
-                              const radiusCmd = `/radius remove [find address=${serverIp}];
-/radius add service=ppp,hotspot address=${serverIp} secret=SmartLinkNet-Public-Fallback realm=10.9.37.1 authentication-port=1812 accounting-port=1813 timeout=3000ms;`;
+                              const ip = serverIp || "142.93.39.55";
+                              const radiusCmd = `/radius remove [find address=${ip}];
+/radius add service=ppp,hotspot address=${ip} secret=SmartLinkNet-Public-Fallback realm=10.9.37.1 authentication-port=1812 accounting-port=1813 timeout=3000ms;`;
                               navigator.clipboard.writeText(radiusCmd);
-                              toast.success("RADIUS command copied - Replace IP with your actual server IP");
+                              toast.success("RADIUS command copied");
                             }}
                             className="text-xs text-primary hover:underline flex items-center gap-1"
                           >
@@ -903,31 +934,43 @@ function RoutersPage() {
                             Copy
                           </button>
                         </div>
-                        <div className="rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 p-4 mb-3">
-                          <p className="text-xs text-amber-900 dark:text-amber-200 mb-3">
-                            <strong>Important:</strong> Replace <code className="bg-amber-900/20 px-1.5 py-0.5 rounded">142.93.39.55</code> with your actual SmartLinkNet server IP address (not hostname - RouterOS requires IP).
-                          </p>
+                        <div className={`rounded-lg border p-4 mb-3 ${
+                          serverIp
+                            ? "bg-success/5 border-success/20"
+                            : "bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/30"
+                        }`}>
+                          {serverIp ? (
+                            <p className="text-xs text-success font-medium mb-2">
+                              ✓ Server IP auto-detected: <code className="bg-success/20 px-1.5 py-0.5 rounded font-mono">{serverIp}</code>
+                            </p>
+                          ) : (
+                            <p className="text-xs text-amber-900 dark:text-amber-200 mb-3">
+                              <strong>Set Server IP:</strong> Add <code className="bg-amber-900/20 px-1.5 py-0.5 rounded">VITE_SERVER_IP</code> to your environment variables with your public server IP address.
+                            </p>
+                          )}
                           <p className="text-xs text-amber-800 dark:text-amber-300">
                             This adds a public fallback RADIUS server. Customer auth survives a WireGuard/mesh outage by retrying over the WAN. Idempotent: re-running replaces the entry rather than stacking duplicates.
                           </p>
                         </div>
                         <div className="rounded-lg bg-background border border-border p-3 mb-3">
                           <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all">
-{`/radius remove [find address=142.93.39.55];
-/radius add service=ppp,hotspot address=142.93.39.55 secret=SmartLinkNet-Public-Fallback realm=10.9.37.1 authentication-port=1812 accounting-port=1813 timeout=3000ms;`}
+{`/radius remove [find address=${serverIp || "142.93.39.55"}];
+/radius add service=ppp,hotspot address=${serverIp || "142.93.39.55"} secret=SmartLinkNet-Public-Fallback realm=10.9.37.1 authentication-port=1812 accounting-port=1813 timeout=3000ms;`}
                           </pre>
                         </div>
-                        <div className="rounded-lg bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 p-3">
-                          <p className="text-xs text-blue-800 dark:text-blue-300">
-                            💡 To find your server's public IP:
-                          </p>
-                          <ol className="text-xs text-blue-800 dark:text-blue-300 list-decimal list-inside mt-1 space-y-1">
-                            <li>Go to your server's control panel or cloud provider dashboard</li>
-                            <li>Look for "Public IP" or "External IP"</li>
-                            <li>Replace <code className="bg-blue-900/20 px-1 rounded">142.93.39.55</code> with that IP</li>
-                            <li>Paste and run in MikroTik terminal</li>
-                          </ol>
-                        </div>
+                        {!serverIp && (
+                          <div className="rounded-lg bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 p-3">
+                            <p className="text-xs text-blue-800 dark:text-blue-300 font-medium mb-2">
+                              💡 To enable auto-detection:
+                            </p>
+                            <ol className="text-xs text-blue-800 dark:text-blue-300 list-decimal list-inside space-y-1">
+                              <li>In Vercel: Settings → Environment Variables</li>
+                              <li>Add: <code className="bg-blue-900/20 px-1 rounded">VITE_SERVER_IP</code> = your public IP</li>
+                              <li>Redeploy the app</li>
+                              <li>Server IP will auto-populate here</li>
+                            </ol>
+                          </div>
+                        )}
                       </div>
 
                       {/* API Enable Script */}
