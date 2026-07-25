@@ -1,0 +1,43 @@
+[90m[[90mnitro:vercel[90m][39m [36mi[39m Using [36mnodejs24.x[39m runtime.
+[90m[[90mnitro:vercel[90m][39m [36mi[39m Using [36mweb[39m entry format.
+[33mThe plugin "vite-tsconfig-paths" is detected. Vite now supports tsconfig paths resolution natively via the [1mresolve.tsconfigPaths[22m option. You can remove the plugin and set [1mresolve.tsconfigPaths: true[22m in your Vite config instead.[39m
+[36mvite v8.0.16 [32mbuilding client environment for production...[36m[39m
+[2Ktransforming...✓ 4436 modules transformed.
+rendering chunks...
+computing gzip size...
+.vercel/output/static/assets/index-vh-t_kPv.css          15.09 kB │ gzip:   6.36 kB
+.vercel/output/static/assets/styles-SAgo6Xh6.css        126.63 kB │ gzip:  19.95 kB
+.vercel/output/static/assets/leaflet-src-ZcTH9kCD.js    148.81 kB │ gzip:  43.38 kB
+.vercel/output/static/assets/index-BiScab0Y.js        1,746.00 kB │ gzip: 462.58 kB
+
+[32m✓ built in 5.99s[39m
+[33m[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 1500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[36mvite v8.0.16 [32mbuilding ssr environment for production...[36m[39m
+[2Ktransforming...✓ 1 modules transformed.
+[31m✗[39m Build failed in 72ms
+[31merror during build:
+[31mBuild failed with 1 error:
+
+[31m[builtin:vite-transform] [0mUnexpected token
+     [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m src/server.ts:192:3 [38;5;246m][0m
+     [38;5;246m│[0m
+ [38;5;246m192 │[0m [38;5;249m [0m[38;5;249m [0m][38;5;249m;[0m
+ [38;5;240m    │[0m   ┬  
+ [38;5;240m    │[0m   ╰── 
+[38;5;246m─────╯[0m
+[31m
+    at aggregateBindingErrorsIntoJsError (file:///c:/Users/Evans%20Micah/Desktop/Wifi%20system/node_modules/vite/node_modules/rolldown/dist/shared/error-BuvQYXuZ.mjs:48:18)
+    at unwrapBindingResult (file:///c:/Users/Evans%20Micah/Desktop/Wifi%20system/node_modules/vite/node_modules/rolldown/dist/shared/error-BuvQYXuZ.mjs:18:128)
+    at #build (file:///c:/Users/Evans%20Micah/Desktop/Wifi%20system/node_modules/vite/node_modules/rolldown/dist/shared/rolldown-build-CrPk_lZe.mjs:3246:34)
+    at async buildEnvironment (file:///c:/Users/Evans%20Micah/Desktop/Wifi%20system/node_modules/vite/dist/node/chunks/node.js:33253:64)
+    at async Object.build (file:///c:/Users/Evans%20Micah/Desktop/Wifi%20system/node_modules/vite/dist/node/chunks/node.js:33675:19)
+    at async buildStartViteEnvironments (file:///c:/Users/Evans%20Micah/Desktop/Wifi%20system/node_modules/@tanstack/start-plugin-core/dist/esm/vite/planning.js:96:23)
+    at async Object.buildApp (file:///c:/Users/Evans%20Micah/Desktop/Wifi%20system/node_modules/@tanstack/start-plugin-core/dist/esm/vite/plugin.js:113:8)
+    at async Object.buildApp (file:///c:/Users/Evans%20Micah/Desktop/Wifi%20system/node_modules/vite/dist/node/chunks/node.js:33667:6)
+    at async CAC.<anonymous> (file:///c:/Users/Evans%20Micah/Desktop/Wifi%20system/node_modules/vite/dist/node/cli.js:777:3) {
+  errors: [Getter/Setter]
+}[39m

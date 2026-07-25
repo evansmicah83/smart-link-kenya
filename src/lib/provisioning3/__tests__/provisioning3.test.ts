@@ -143,7 +143,7 @@ describe("AuditTrailService", () => {
   });
 });
 
-// ── WorkflowEngine — queries & initiation ─────────────────────────────────────
+// ── WorkflowEngine ────────────────────────────────────────────────────────────
 
 import { workflowEngine } from "../services/workflow-engine";
 
@@ -183,16 +183,15 @@ describe("WorkflowEngine.list", () => {
 
 describe("WorkflowEngine.initiate", () => {
   it("calls fn_initiate_workflow rpc with correct params", async () => {
-    (mockQuery as any).__proto__ = {};
     const { supabase: sb } = await import("./mocks/supabase-client");
     (sb.rpc as any).mockResolvedValueOnce({ data: "wf-new", error: null });
     const id = await workflowEngine.initiate({
-      tenantId:        "tenant-1",
-      type:            "payment_success",
-      payload:         { payment_id: "pay-1", amount: 500 },
-      idempotencyKey:  "payment_success-pay-1",
-      triggerSource:   "mpesa_callback",
-      triggerEntityId: "pay-1",
+      tenantId:          "tenant-1",
+      type:              "payment_success",
+      payload:           { payment_id: "pay-1", amount: 500 },
+      idempotencyKey:    "payment_success-pay-1",
+      triggerSource:     "mpesa_callback",
+      triggerEntityId:   "pay-1",
       triggerEntityType: "payment",
     });
     expect(sb.rpc).toHaveBeenCalledWith("fn_initiate_workflow", expect.objectContaining({
@@ -251,113 +250,6 @@ describe("WorkflowEngine.triggerManual", () => {
   });
 });
 
-// ── WorkflowEngine — queries & initiation ────────────────────────────────────
-
-import { workflowEngine } from "../services/workflow-engine";
-
-describe("WorkflowEngine.list", () => {
-  it("lists workflows for a tenant", async () => {
-    mockQuery.limit.mockResolvedValueOnce({ data: [], error: null });
-    await workflowEngine.list("tenant-1");
-    expect(mockQuery.eq).toHaveBeenCalledWith("tenant_id", "tenant-1");
-    expect(mockQuery.order).toHaveBeenCalledWith("created_at", { ascending: false });
-  });
-
-  it("filters by status when provided", async () => {
-    mockQuery.limit.mockResolvedValueOnce({ data: [], error: null });
-    await workflowEngine.list("tenant-1", { status: "failed" });
-    expect(mockQuery.eq).toHaveBeenCalledWith("status", "failed");
-  });
-
-  it("maps DB row to camelCase ProvisioningWorkflow", async () => {
-    const row = {
-      id: "wf-1", tenant_id: "t1", type: "payment_success", status: "completed",
-      payload: {}, current_step: 3, total_steps: 3, completed_steps: 3,
-      idempotency_key: "key-1", error: null, rollback_error: null,
-      retry_count: 0, max_retries: 3, trigger_source: "mpesa_callback",
-      trigger_entity_id: "pay-1", trigger_entity_type: "payment",
-      progress_pct: 100, duration_seconds: 12,
-      started_at: "2026-06-28T00:00:00Z", completed_at: "2026-06-28T00:00:12Z",
-      created_at: "2026-06-28T00:00:00Z",
-    };
-    mockQuery.limit.mockResolvedValueOnce({ data: [row], error: null });
-    const results = await workflowEngine.list("t1");
-    expect(results[0].idempotencyKey).toBe("key-1");
-    expect(results[0].triggerSource).toBe("mpesa_callback");
-    expect(results[0].progressPct).toBe(100);
-    expect(results[0].durationSeconds).toBe(12);
-  });
-});
-
-describe("WorkflowEngine.initiate", () => {
-  it("calls fn_initiate_workflow rpc with correct params", async () => {
-    const { supabase: sb } = await import("./mocks/supabase-client");
-    (sb.rpc as any).mockResolvedValueOnce({ data: "wf-new", error: null });
-    const id = await workflowEngine.initiate({
-      tenantId:          "tenant-1",
-      type:              "payment_success",
-      payload:           { payment_id: "pay-1", amount: 500 },
-      idempotencyKey:    "payment_success-pay-1",
-      triggerSource:     "mpesa_callback",
-      triggerEntityId:   "pay-1",
-      triggerEntityType: "payment",
-    });
-    expect(sb.rpc).toHaveBeenCalledWith("fn_initiate_workflow", expect.objectContaining({
-      _tenant_id:       "tenant-1",
-      _type:            "payment_success",
-      _idempotency_key: "payment_success-pay-1",
-      _trigger_source:  "mpesa_callback",
-    }));
-    expect(id).toBe("wf-new");
-  });
-
-  it("throws when rpc returns error", async () => {
-    const { supabase: sb } = await import("./mocks/supabase-client");
-    (sb.rpc as any).mockResolvedValueOnce({ data: null, error: { message: "DB error" } });
-    await expect(workflowEngine.initiate({
-      tenantId: "t1", type: "payment_failure",
-      payload: {}, idempotencyKey: "k1",
-    })).rejects.toThrow("DB error");
-  });
-});
-
-describe("WorkflowEngine.triggerManual", () => {
-  it("initiates manual_activation with correct params", async () => {
-    const { supabase: sb } = await import("./mocks/supabase-client");
-    (sb.rpc as any).mockResolvedValueOnce({ data: "wf-manual-1", error: null });
-    const id = await workflowEngine.triggerManual({
-      tenantId:       "tenant-1",
-      type:           "manual_activation",
-      subscriptionId: "sub-1",
-      customerId:     "cust-1",
-      operatorId:     "user-1",
-    });
-    expect(sb.rpc).toHaveBeenCalledWith("fn_initiate_workflow", expect.objectContaining({
-      _type:                "manual_activation",
-      _trigger_entity_id:   "sub-1",
-      _trigger_entity_type: "subscription",
-      _trigger_source:      "operator",
-    }));
-    expect(id).toBe("wf-manual-1");
-  });
-
-  it("includes reason in payload for manual_suspension", async () => {
-    const { supabase: sb } = await import("./mocks/supabase-client");
-    (sb.rpc as any).mockResolvedValueOnce({ data: "wf-manual-2", error: null });
-    await workflowEngine.triggerManual({
-      tenantId:       "tenant-1",
-      type:           "manual_suspension",
-      subscriptionId: "sub-2",
-      customerId:     "cust-2",
-      operatorId:     "user-1",
-      reason:         "Non-payment",
-    });
-    expect(sb.rpc).toHaveBeenCalledWith("fn_initiate_workflow", expect.objectContaining({
-      _payload: expect.objectContaining({ reason: "Non-payment" }),
-    }));
-  });
-});
-
 describe("WorkflowEngine.retry", () => {
   it("resets a failed workflow to pending and enqueues job", async () => {
     const wfRow = {
@@ -371,9 +263,9 @@ describe("WorkflowEngine.retry", () => {
       created_at: "2026-06-28T00:00:00Z",
     };
     mockQuery.maybeSingle.mockResolvedValueOnce({ data: wfRow, error: null });
-    mockQuery.eq.mockResolvedValueOnce({ error: null }); // update
-    mockQuery.insert.mockResolvedValueOnce({ error: null }); // job_queue
-    mockQuery.catch.mockResolvedValueOnce({}); // event append
+    mockQuery.eq.mockResolvedValueOnce({ error: null });
+    mockQuery.insert.mockResolvedValueOnce({ error: null });
+    mockQuery.catch.mockResolvedValueOnce({});
 
     await workflowEngine.retry("wf-1");
 
@@ -447,7 +339,6 @@ describe("RecoveryService", () => {
     (sb.rpc as any).mockResolvedValueOnce({ data: 2, error: null });
     mockQuery.select.mockReturnThis();
     mockQuery.eq.mockReturnThis();
-    // second eq for pending + error filter
     mockQuery.eq.mockResolvedValueOnce({ data: [], error: null });
     const count = await recoveryService.recoverStaleWorkflows();
     expect(sb.rpc).toHaveBeenCalledWith("fn_recover_stale_workflows");

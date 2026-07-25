@@ -815,34 +815,47 @@ function RoutersPage() {
 
           {/* View Router Modal */}
           {viewingRouter && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 overflow-auto">
-              <div className="bg-card rounded-2xl border border-border w-full max-w-3xl my-8">
+            <div
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+              onClick={(e) => { if (e.target === e.currentTarget) setViewingRouter(null); }}
+            >
+              <div className="bg-card w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl border border-border flex flex-col max-h-[92dvh] sm:max-h-[88vh] overflow-hidden">
                 {/* Header */}
-                <div className="flex items-center justify-between p-6 border-b border-border sticky top-0 bg-card rounded-t-2xl">
-                  <div>
-                    <h2 className="text-xl font-bold">{viewingRouter.name}</h2>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {viewingRouter.model || "RouterOS"} • {viewingRouter.status === "online" ? "🟢 Online" : "🔴 Offline"}
-                    </p>
+                <div className="flex items-start justify-between px-5 py-4 border-b border-border shrink-0">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-2.5 h-2.5 rounded-full shrink-0 mt-0.5 ${
+                      viewingRouter.status === "online" ? "bg-success" : "bg-destructive"
+                    }`} />
+                    <div className="min-w-0">
+                      <h2 className="text-base font-bold leading-tight truncate">{viewingRouter.name}</h2>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {viewingRouter.model || "RouterOS"}
+                        <span className={`ml-2 font-medium ${
+                          viewingRouter.status === "online" ? "text-success" : "text-destructive"
+                        }`}>
+                          {viewingRouter.status === "online" ? "Online" : "Offline"}
+                        </span>
+                      </p>
+                    </div>
                   </div>
                   <button
                     onClick={() => setViewingRouter(null)}
-                    className="text-muted-foreground hover:text-foreground"
+                    className="shrink-0 ml-3 w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                   >
-                    <X className="w-6 h-6" />
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
 
                 {/* Tabs */}
-                <div className="flex gap-0 border-b border-border">
-                  {["details", "scripts", "diagnostics"].map((tab) => (
+                <div className="flex gap-1 px-5 py-2.5 border-b border-border shrink-0 bg-muted/30">
+                  {(["details", "scripts", "diagnostics"] as const).map((tab) => (
                     <button
                       key={tab}
-                      onClick={() => setViewTab(tab as any)}
-                      className={`flex-1 px-4 py-3 text-sm font-medium border-b-2 transition-colors capitalize ${
+                      onClick={() => setViewTab(tab)}
+                      className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors capitalize ${
                         viewTab === tab
-                          ? "border-primary text-primary"
-                          : "border-transparent text-muted-foreground hover:text-foreground"
+                          ? "bg-card text-foreground shadow-sm border border-border"
+                          : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
                       {tab}
@@ -851,43 +864,30 @@ function RoutersPage() {
                 </div>
 
                 {/* Content */}
-                <div className="p-6 max-h-[60vh] overflow-y-auto">
+                <div className="flex-1 overflow-y-auto px-5 py-4">
                   {viewTab === "details" && (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="rounded-lg bg-muted p-3">
-                          <p className="text-xs text-muted-foreground font-semibold uppercase mb-1">Name</p>
-                          <p className="font-mono text-sm">{viewingRouter.name}</p>
+                    <div className="space-y-2">
+                      {([
+                        { label: "Name", value: viewingRouter.name },
+                        { label: "Model", value: viewingRouter.model || "—" },
+                        { label: "Status", value: viewingRouter.status === "online" ? "Online" : "Offline", status: viewingRouter.status },
+                        { label: "VPN Address", value: viewingRouter.ip_address || "—" },
+                        { label: "Services", value: viewingRouter.services?.map((s: string) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ") || "—" },
+                        { label: "Bridge Port", value: viewingRouter.bridge_port || "—" },
+                        { label: "Subnet", value: viewingRouter.subnet || "—" },
+                        { label: "Identity", value: viewingRouter.provisioning_identity || "—" },
+                      ]).map((row) => (
+                        <div key={row.label} className="flex items-center justify-between py-2.5 border-b border-border/60 last:border-0">
+                          <span className="text-xs text-muted-foreground font-medium w-28 shrink-0">{row.label}</span>
+                          {row.status ? (
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                              row.status === "online" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"
+                            }`}>{row.value}</span>
+                          ) : (
+                            <span className="font-mono text-sm text-foreground text-right break-all">{row.value}</span>
+                          )}
                         </div>
-                        <div className="rounded-lg bg-muted p-3">
-                          <p className="text-xs text-muted-foreground font-semibold uppercase mb-1">Model</p>
-                          <p className="font-mono text-sm">{viewingRouter.model || "—"}</p>
-                        </div>
-                        <div className="rounded-lg bg-muted p-3">
-                          <p className="text-xs text-muted-foreground font-semibold uppercase mb-1">Status</p>
-                          <p className="font-mono text-sm">{viewingRouter.status === "online" ? "🟢 Online" : "🔴 Offline"}</p>
-                        </div>
-                        <div className="rounded-lg bg-muted p-3">
-                          <p className="text-xs text-muted-foreground font-semibold uppercase mb-1">VPN Address</p>
-                          <p className="font-mono text-sm">{viewingRouter.ip_address || "—"}</p>
-                        </div>
-                        <div className="rounded-lg bg-muted p-3">
-                          <p className="text-xs text-muted-foreground font-semibold uppercase mb-1">Services</p>
-                          <p className="font-mono text-sm">{viewingRouter.services?.map((s) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ") || "—"}</p>
-                        </div>
-                        <div className="rounded-lg bg-muted p-3">
-                          <p className="text-xs text-muted-foreground font-semibold uppercase mb-1">Bridge Port</p>
-                          <p className="font-mono text-sm">{viewingRouter.bridge_port || "—"}</p>
-                        </div>
-                        <div className="rounded-lg bg-muted p-3">
-                          <p className="text-xs text-muted-foreground font-semibold uppercase mb-1">Subnet</p>
-                          <p className="font-mono text-sm">{viewingRouter.subnet || "—"}</p>
-                        </div>
-                        <div className="rounded-lg bg-muted p-3">
-                          <p className="text-xs text-muted-foreground font-semibold uppercase mb-1">Identity</p>
-                          <p className="font-mono text-sm">{viewingRouter.provisioning_identity || "—"}</p>
-                        </div>
-                      </div>
+                      ))}
                     </div>
                   )}
 
@@ -895,103 +895,88 @@ function RoutersPage() {
                     <div className="space-y-5">
                       {/* Provisioning Script */}
                       <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <h3 className="font-semibold text-sm">Provisioning Script</h3>
-                          <button
-                            onClick={() => {
-                              const script = `/tool fetch mode=https url="${window.location.origin}/provision/${viewingRouter.provisioning_slug}" dst-path=${viewingRouter.provisioning_slug}.rsc;:delay 2s;/import ${viewingRouter.provisioning_slug}.rsc;`;
-                              navigator.clipboard.writeText(script);
-                              toast.success("Script copied");
-                            }}
-                            className="text-xs text-primary hover:underline flex items-center gap-1"
-                          >
-                            <Copy className="w-3 h-3" />
-                            Copy
-                          </button>
-                        </div>
-                        <div className="rounded-lg bg-background border border-border p-3">
-                          <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Provisioning Script</p>
+                        <div className="rounded-xl border border-border overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border">
+                            <span className="text-xs text-muted-foreground font-mono">RouterOS Terminal</span>
+                            <button
+                              onClick={() => {
+                                const script = `/tool fetch mode=https url="${window.location.origin}/provision/${viewingRouter.provisioning_slug}" dst-path=${viewingRouter.provisioning_slug}.rsc;:delay 2s;/import ${viewingRouter.provisioning_slug}.rsc;`;
+                                navigator.clipboard.writeText(script);
+                                toast.success("Script copied");
+                              }}
+                              className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-medium transition-colors"
+                            >
+                              <Copy className="w-3 h-3" /> Copy
+                            </button>
+                          </div>
+                          <div className="p-3 bg-background">
+                            <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all leading-relaxed">
 {`/tool fetch mode=https url="${window.location.origin}/provision/${viewingRouter.provisioning_slug}" dst-path=${viewingRouter.provisioning_slug}.rsc;:delay 2s;/import ${viewingRouter.provisioning_slug}.rsc;`}
-                          </pre>
+                            </pre>
+                          </div>
                         </div>
                       </div>
 
                       {/* Fallback RADIUS */}
                       <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <h3 className="font-semibold text-sm">Fallback RADIUS (Public)</h3>
-                          <button
-                            onClick={() => {
-                              const ip = serverIp || "142.93.39.55";
-                              const radiusCmd = `/radius remove [find address=${ip}];
-/radius add service=ppp,hotspot address=${ip} secret=SmartLinkNet-Public-Fallback realm=10.9.37.1 authentication-port=1812 accounting-port=1813 timeout=3000ms;`;
-                              navigator.clipboard.writeText(radiusCmd);
-                              toast.success("RADIUS command copied");
-                            }}
-                            className="text-xs text-primary hover:underline flex items-center gap-1"
-                          >
-                            <Copy className="w-3 h-3" />
-                            Copy
-                          </button>
-                        </div>
-                        <div className={`rounded-lg border p-4 mb-3 ${
-                          serverIp
-                            ? "bg-success/5 border-success/20"
-                            : "bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/30"
-                        }`}>
-                          {serverIp ? (
-                            <p className="text-xs text-success font-medium mb-2">
-                              ✓ Server IP auto-detected: <code className="bg-success/20 px-1.5 py-0.5 rounded font-mono">{serverIp}</code>
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Fallback RADIUS (Public)</p>
+                        {serverIp ? (
+                          <div className="flex items-center gap-2 rounded-lg bg-success/5 border border-success/20 px-3 py-2 mb-2">
+                            <span className="text-xs text-success font-medium">✓ Server IP:</span>
+                            <code className="text-xs font-mono text-success">{serverIp}</code>
+                          </div>
+                        ) : (
+                          <div className="flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 px-3 py-2 mb-2">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                            <p className="text-xs text-amber-800 dark:text-amber-300">
+                              Set <code className="bg-amber-900/10 px-1 rounded">VITE_SERVER_IP</code> in Vercel env vars to auto-populate.
                             </p>
-                          ) : (
-                            <p className="text-xs text-amber-900 dark:text-amber-200 mb-3">
-                              <strong>Set Server IP:</strong> Add <code className="bg-amber-900/20 px-1.5 py-0.5 rounded">VITE_SERVER_IP</code> to your environment variables with your public server IP address.
-                            </p>
-                          )}
-                          <p className="text-xs text-amber-800 dark:text-amber-300">
-                            This adds a public fallback RADIUS server. Customer auth survives a WireGuard/mesh outage by retrying over the WAN. Idempotent: re-running replaces the entry rather than stacking duplicates.
-                          </p>
-                        </div>
-                        <div className="rounded-lg bg-background border border-border p-3 mb-3">
-                          <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all">
-{`/radius remove [find address=${serverIp || "142.93.39.55"}];
-/radius add service=ppp,hotspot address=${serverIp || "142.93.39.55"} secret=SmartLinkNet-Public-Fallback realm=10.9.37.1 authentication-port=1812 accounting-port=1813 timeout=3000ms;`}
-                          </pre>
-                        </div>
-                        {!serverIp && (
-                          <div className="rounded-lg bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 p-3">
-                            <p className="text-xs text-blue-800 dark:text-blue-300 font-medium mb-2">
-                              💡 To enable auto-detection:
-                            </p>
-                            <ol className="text-xs text-blue-800 dark:text-blue-300 list-decimal list-inside space-y-1">
-                              <li>In Vercel: Settings → Environment Variables</li>
-                              <li>Add: <code className="bg-blue-900/20 px-1 rounded">VITE_SERVER_IP</code> = your public IP</li>
-                              <li>Redeploy the app</li>
-                              <li>Server IP will auto-populate here</li>
-                            </ol>
                           </div>
                         )}
+                        <div className="rounded-xl border border-border overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border">
+                            <span className="text-xs text-muted-foreground font-mono">RouterOS Terminal</span>
+                            <button
+                              onClick={() => {
+                                const ip = serverIp || "142.93.39.55";
+                                navigator.clipboard.writeText(`/radius remove [find address=${ip}];
+/radius add service=ppp,hotspot address=${ip} secret=SmartLinkNet-Public-Fallback realm=10.9.37.1 authentication-port=1812 accounting-port=1813 timeout=3000ms;`);
+                                toast.success("RADIUS command copied");
+                              }}
+                              className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-medium transition-colors"
+                            >
+                              <Copy className="w-3 h-3" /> Copy
+                            </button>
+                          </div>
+                          <div className="p-3 bg-background">
+                            <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all leading-relaxed">
+{`/radius remove [find address=${serverIp || "142.93.39.55"}];
+/radius add service=ppp,hotspot address=${serverIp || "142.93.39.55"} secret=SmartLinkNet-Public-Fallback realm=10.9.37.1 authentication-port=1812 accounting-port=1813 timeout=3000ms;`}
+                            </pre>
+                          </div>
+                        </div>
                       </div>
 
-                      {/* API Enable Script */}
+                      {/* Enable API Port */}
                       <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <h3 className="font-semibold text-sm">Enable API Port</h3>
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText("/ip service set api port=8728 disabled=no");
-                              toast.success("Command copied");
-                            }}
-                            className="text-xs text-primary hover:underline flex items-center gap-1"
-                          >
-                            <Copy className="w-3 h-3" />
-                            Copy
-                          </button>
-                        </div>
-                        <div className="rounded-lg bg-background border border-border p-3">
-                          <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all">
-/ip service set api port=8728 disabled=no
-                          </pre>
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Enable API Port</p>
+                        <div className="rounded-xl border border-border overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border">
+                            <span className="text-xs text-muted-foreground font-mono">RouterOS Terminal</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText("/ip service set api port=8728 disabled=no");
+                                toast.success("Command copied");
+                              }}
+                              className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 font-medium transition-colors"
+                            >
+                              <Copy className="w-3 h-3" /> Copy
+                            </button>
+                          </div>
+                          <div className="p-3 bg-background">
+                            <pre className="text-xs font-mono text-foreground">/ip service set api port=8728 disabled=no</pre>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -999,74 +984,62 @@ function RoutersPage() {
 
                   {viewTab === "diagnostics" && (
                     <div className="space-y-4">
-                      <div className="rounded-lg bg-muted p-4">
-                        <h3 className="font-semibold text-sm mb-3">Diagnostic Checks</h3>
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm">Connection Status</span>
-                            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                              viewingRouter.status === "online"
+                      <div className="rounded-xl border border-border overflow-hidden">
+                        {([
+                          { label: "Connection Status", ok: viewingRouter.status === "online", okText: "Online", failText: "Offline" },
+                          { label: "VPN Integration", ok: !!viewingRouter.ip_address, okText: "Connected", failText: "Pending" },
+                          { label: "Services Configured", ok: !!viewingRouter.services?.length, okText: `${viewingRouter.services?.length} active`, failText: "None" },
+                          { label: "Bridge Configured", ok: !!viewingRouter.bridge_port, okText: viewingRouter.bridge_port, failText: "Not set" },
+                        ]).map((check, i, arr) => (
+                          <div key={check.label} className={`flex items-center justify-between px-4 py-3 ${
+                            i < arr.length - 1 ? "border-b border-border" : ""
+                          }`}>
+                            <span className="text-sm text-foreground">{check.label}</span>
+                            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+                              check.ok
                                 ? "bg-success/10 text-success"
+                                : i === 1 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
                                 : "bg-destructive/10 text-destructive"
                             }`}>
-                              {viewingRouter.status === "online" ? "✓ Online" : "✗ Offline"}
+                              {check.ok ? `✓ ${check.okText}` : `⚠ ${check.failText}`}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm">VPN Integration</span>
-                            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                              viewingRouter.ip_address
-                                ? "bg-success/10 text-success"
-                                : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                            }`}>
-                              {viewingRouter.ip_address ? "✓ Connected" : "⚠ Pending"}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm">Services Configured</span>
-                            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                              viewingRouter.services?.length
-                                ? "bg-success/10 text-success"
-                                : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                            }`}>
-                              {viewingRouter.services?.length ? `✓ ${viewingRouter.services.length}` : "⚠ None"}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm">Bridge Configured</span>
-                            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                              viewingRouter.bridge_port
-                                ? "bg-success/10 text-success"
-                                : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                            }`}>
-                              {viewingRouter.bridge_port ? `✓ ${viewingRouter.bridge_port}` : "⚠ Not set"}
-                            </span>
-                          </div>
-                        </div>
+                        ))}
                       </div>
 
                       {/* Recommendations */}
-                      <div className="rounded-lg bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 p-4">
-                        <h3 className="font-semibold text-sm text-blue-900 dark:text-blue-200 mb-2">Recommendations</h3>
-                        <ul className="text-xs text-blue-800 dark:text-blue-300 space-y-1 list-disc list-inside">
-                          {viewingRouter.status === "offline" && <li>Router is offline - check network connection</li>}
-                          {!viewingRouter.ip_address && <li>Router not reporting VPN address - check provisioning script output</li>}
-                          {!viewingRouter.services?.length && <li>No services configured - run provisioning to set up PPPoE/Hotspot</li>}
-                          {!viewingRouter.bridge_port && <li>Bridge port not configured - complete provisioning wizard</li>}
-                          {viewingRouter.status === "online" && viewingRouter.ip_address && viewingRouter.services?.length && viewingRouter.bridge_port && (
-                            <li>✓ All systems operational - ready for subscribers</li>
-                          )}
-                        </ul>
-                      </div>
+                      {(() => {
+                        const tips: string[] = [];
+                        if (viewingRouter.status === "offline") tips.push("Router is offline — check network connection");
+                        if (!viewingRouter.ip_address) tips.push("Not reporting VPN address — check provisioning script output");
+                        if (!viewingRouter.services?.length) tips.push("No services configured — run provisioning wizard");
+                        if (!viewingRouter.bridge_port) tips.push("Bridge port not set — complete provisioning wizard");
+                        return tips.length > 0 ? (
+                          <div className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-4">
+                            <p className="text-xs font-semibold text-amber-900 dark:text-amber-200 mb-2">Recommendations</p>
+                            <ul className="space-y-1.5">
+                              {tips.map((t) => (
+                                <li key={t} className="text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                                  <span className="mt-0.5 shrink-0">•</span>{t}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : (
+                          <div className="rounded-xl border border-success/20 bg-success/5 p-4">
+                            <p className="text-xs font-semibold text-success">✓ All systems operational — ready for subscribers</p>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
 
                 {/* Footer */}
-                <div className="border-t border-border p-6 flex gap-3">
+                <div className="shrink-0 border-t border-border px-5 py-3 flex items-center justify-between gap-3">
                   <button
                     onClick={() => setViewingRouter(null)}
-                    className="flex-1 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-medium hover:bg-muted transition-colors"
+                    className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-2 py-1.5"
                   >
                     Close
                   </button>
@@ -1075,8 +1048,9 @@ function RoutersPage() {
                       handleReprovisionRouter(viewingRouter);
                       setViewingRouter(null);
                     }}
-                    className="flex-1 rounded-lg bg-primary text-primary-foreground px-4 py-2.5 text-sm font-medium hover:bg-primary/90 transition-colors"
+                    className="flex items-center gap-2 rounded-full bg-primary text-primary-foreground px-5 py-2 text-sm font-semibold hover:bg-primary/90 transition-colors"
                   >
+                    <RotateCw className="w-3.5 h-3.5" />
                     Reprovision
                   </button>
                 </div>

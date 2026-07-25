@@ -14,29 +14,45 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    include: [
-      "src/lib/aaa2/__tests__/**/*.test.ts",
-      "src/lib/provisioning/**/*.test.ts",
-      "src/lib/provisioning3/__tests__/**/*.test.ts",
-      "src/lib/network/__tests__/**/*.test.ts",
-    ],
     setupFiles: [
       "src/lib/aaa2/__tests__/setup.ts",
       "src/lib/provisioning3/__tests__/setup.ts",
     ],
-    alias: {
-      "@/integrations/supabase/client": path.resolve(
-        __dirname,
-        "src/lib/provisioning3/__tests__/mocks/supabase-client.ts"
-      ),
-      "@/lib/network/drivers/mikrotik-rest": path.resolve(
-        __dirname,
-        "src/lib/aaa2/__tests__/mocks/mikrotik-rest.ts"
-      ),
-      "@/lib/network": path.resolve(
-        __dirname,
-        "src/lib/aaa2/__tests__/mocks/network.ts"
-      ),
-    },
+    projects: [
+      {
+        // ── Mock-alias project: aaa2, provisioning, provisioning3 ──────────
+        test: {
+          name: "mocked",
+          include: [
+            "src/lib/aaa2/__tests__/**/*.test.ts",
+            "src/lib/provisioning/**/*.test.ts",
+            "src/lib/provisioning3/__tests__/**/*.test.ts",
+          ],
+          alias: {
+            "@/integrations/supabase/client": path.resolve(
+              __dirname,
+              "src/lib/provisioning3/__tests__/mocks/supabase-client.ts"
+            ),
+            "@/lib/network/drivers/mikrotik-rest": path.resolve(
+              __dirname,
+              "src/lib/aaa2/__tests__/mocks/mikrotik-rest.ts"
+            ),
+            "@/lib/network": path.resolve(
+              __dirname,
+              "src/lib/aaa2/__tests__/mocks/network.ts"
+            ),
+          },
+        },
+      },
+      {
+        // ── vi.mock() project: network tests use their own vi.mock() calls ─
+        test: {
+          name: "network",
+          include: [
+            "src/lib/network/__tests__/**/*.test.ts",
+          ],
+        },
+      },
+    ],
   },
 });
