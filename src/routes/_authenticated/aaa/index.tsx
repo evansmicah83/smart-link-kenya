@@ -119,7 +119,7 @@ function AaaPage() {
     queryFn: async () => {
       let q = (supabase as any)
         .from("auth_events")
-        .select("id, username, event_type, reply_message, received_at, nas_devices(name)")
+        .select("id, username, event_type, reply_message, received_at, nas_devices!nas_id(name)")
         .eq("tenant_id", tenantId!)
         .order("received_at", { ascending: false })
         .limit(100);

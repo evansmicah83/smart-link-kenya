@@ -46,7 +46,7 @@ function PPPoEPage() {
     queryFn: async () => {
       let q = supabase
         .from("subscriptions")
-        .select("*, customers(full_name, phone), packages(name, speed_down_kbps, speed_up_kbps), routers(name)")
+        .select("*, customers(full_name, phone), packages(name, speed_down_kbps, speed_up_kbps)")
         .eq("tenant_id", tenantId!)
         .eq("type", "pppoe")
         .order("created_at", { ascending: false });
@@ -240,7 +240,7 @@ function PPPoEPage() {
                 </td>
                 <td className="px-4 py-3 font-mono text-xs">{s.username}</td>
                 <td className="px-4 py-3 text-xs">{(s as any).packages?.name}</td>
-                <td className="px-4 py-3 text-xs">{(s as any).routers?.name ?? "—"}</td>
+                <td className="px-4 py-3 text-xs">{routers.data?.find((r) => r.id === s.router_id)?.name ?? "—"}</td>
                 <td className="px-4 py-3">
                   <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${s.status === "active" ? "bg-green-500/15 text-green-600" : "bg-yellow-500/15 text-yellow-600"}`}>{s.status}</span>
                 </td>
