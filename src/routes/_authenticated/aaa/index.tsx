@@ -119,7 +119,7 @@ function AaaPage() {
     queryFn: async () => {
       let q = (supabase as any)
         .from("auth_events")
-        .select("id, username, event_type, reply_message, received_at, nas_devices!nas_id(name)")
+        .select("id, username, event_type, reply_message, received_at, nas_id")
         .eq("tenant_id", tenantId!)
         .order("received_at", { ascending: false })
         .limit(100);
@@ -560,7 +560,7 @@ function AaaPage() {
                         : "bg-muted text-muted-foreground"
                       }`}>{row.event_type}</span>
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell text-xs">{row.nas_devices?.name ?? "—"}</TableCell>
+                    <TableCell className="hidden sm:table-cell text-xs">{nasDevices.data?.find((n: any) => n.id === row.nas_id)?.name ?? "—"}</TableCell>
                     <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{row.reply_message ?? "—"}</TableCell>
                     <TableCell className="text-xs">{new Date(row.received_at).toLocaleString()}</TableCell>
                   </TableRow>
