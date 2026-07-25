@@ -182,10 +182,9 @@ async function buildProvisionScript(slug: string, origin: string) { // origin pa
   if (hasHotspot) {
     s += "# --- Hotspot (Captive Portal) Configuration ---\r\n";
     s += "# RADIUS server for hotspot auth (points back to SmartLinkNet)\r\n";
-    s += ":local radiusSecret \"SmartLinkNet-Public-Fallback\"\r\n";
-    s += ":local radiusHost \"" + origin.replace(/^https?:\/\//, "").split("/")[0] + "\"\r\n";
+    const radiusHost = origin.replace(/^https?:\/\//, "").split("/")[0];
     s += "/radius remove [find service=hotspot]\r\n";
-    s += "/radius add service=hotspot address=$radiusHost secret=$radiusSecret authentication-port=1812 accounting-port=1813 timeout=3000ms\r\n";
+    s += "/radius add service=hotspot address=" + radiusHost + " secret=SmartLinkNet-Public-Fallback authentication-port=1812 accounting-port=1813 timeout=3s\r\n";
     s += "\r\n";
     s += "# Hotspot profile with RADIUS auth\r\n";
     s += ifLen("/ip hotspot profile find name=\"" + template.tenantSlug + "-profile\"", "/ip hotspot profile add name=\"" + template.tenantSlug + "-profile\" use-radius=yes login-by=http-chap,http-pap,https,mac-cookie hotspot-address=" + gateway + " dns-name=\"" + template.tenantSlug + ".hotspot\"") + "\r\n";
