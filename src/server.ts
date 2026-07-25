@@ -123,6 +123,34 @@ async function markRouterOnline(slug: string, request: Request) {
         nasDeviceId = inserted?.id ?? null;
       }
 
+      // Auto-upsert radius_servers so the AAA Servers tab is populated
+      const { data: existingServer } = await supabaseAdmin
+        .from("radius_servers")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .eq("name", routerName)
+        .maybeSingle();
+      const serverPayload = {
+        tenant_id:    tenantId,
+        name:         routerName,
+        host:         forwardedFor ?? "127.0.0.1",
+        auth_port:    1812,
+        acct_port:    1813,
+        shared_secret: "SmartLinkNet-Public-Fallback",
+        protocol:     "mschapv2",
+        is_primary:   true,
+        is_active:    true,
+        timeout_ms:   3000,
+        retry_count:  3,
+        priority:     1,
+        updated_at:   new Date().toISOString(),
+      };
+      if (existingServer?.id) {
+        await supabaseAdmin.from("radius_servers").update(serverPayload).eq("id", existingServer.id);
+      } else {
+        await supabaseAdmin.from("radius_servers").insert(serverPayload);
+      }
+
       // Auto-upsert radius_clients so the AAA Clients tab is populated
       if (forwardedFor) {
         const { data: existingClient } = await supabaseAdmin
