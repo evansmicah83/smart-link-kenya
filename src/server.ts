@@ -39,7 +39,7 @@ async function getRouterProvisionRecord(slug: string) {
   const safeSlug = normalizeProvisionSlug(slug);
   const { data, error } = await supabaseAdmin
     .from("routers")
-    .select("id, tenant_id, services, bridge_port, subnet, provisioning_slug, provisioning_identity")
+    .select("id, name, tenant_id, services, bridge_port, subnet, provisioning_slug, provisioning_identity, ip_address")
     .eq("provisioning_slug", safeSlug)
     .maybeSingle();
 
@@ -49,7 +49,7 @@ async function getRouterProvisionRecord(slug: string) {
   if (parsed.tenantId && parsed.identity) {
     const { data: fallbackData, error: fallbackError } = await supabaseAdmin
       .from("routers")
-      .select("id, tenant_id, services, bridge_port, subnet, provisioning_slug, provisioning_identity")
+      .select("id, name, tenant_id, services, bridge_port, subnet, provisioning_slug, provisioning_identity, ip_address")
       .eq("tenant_id", parsed.tenantId)
       .ilike("name", `%${parsed.identity}%`)
       .order("created_at", { ascending: false })
@@ -65,29 +65,22 @@ async function markRouterOnline(slug: string, request: Request) {
   try {
     const routerName = new URL(request.url).searchParams.get("router")?.trim() || getRouterIdentityFromSlug(slug);
     const record = await getRouterProvisionRecord(slug);
-    const routerId = (record as { id?: string } | null | undefined)?.id;
+    const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+    let routerId = (record as { id?: string } | null | undefined)?.id;
+    let tenantId = (record as { tenant_id?: string } | null | undefined)?.tenant_id;
 
     if (!routerId) {
       const { data, error } = await supabaseAdmin
         .from("routers")
-        .select("id")
+        .select("id, tenant_id")
         .ilike("name", routerName)
         .limit(1);
 
       if (error || !data?.[0]?.id) return;
-      await supabaseAdmin
-        .from("routers")
-        .update({
-          status: "online",
-          last_seen: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          ip_address: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-        } as any)
-        .eq("id", data[0].id);
-      return;
+      routerId = data[0].id;
+      tenantId = data[0].tenant_id;
     }
 
-    const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
     await supabaseAdmin
       .from("routers")
       .update({
@@ -97,12 +90,37 @@ async function markRouterOnline(slug: string, request: Request) {
         ip_address: forwardedFor ?? null,
       } as any)
       .eq("id", routerId);
+
+    // Auto-upsert NAS device so AAA page reflects real router data
+    if (tenantId && routerId) {
+      await supabaseAdmin
+        .from("nas_devices")
+        .upsert({
+          tenant_id: tenantId,
+          router_id: routerId,
+          name: routerName,
+          vendor: "mikrotik",
+          nas_identifier: routerName,
+          nas_ip: forwardedFor ?? null,
+          shared_secret: "SmartLinkNet-Public-Fallback",
+          auth_port: 1812,
+          acct_port: 1813,
+          coa_port: 3799,
+          is_active: true,
+          dynamic_profile_enabled: true,
+          dynamic_vlan_enabled: false,
+          dynamic_ip_enabled: false,
+          last_seen: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        } as any, { onConflict: "router_id" })
+        .catch(() => {});
+    }
   } catch (error) {
     console.error("Failed to mark router online", error);
   }
 }
 
-async function buildProvisionScript(slug: string, origin: string) {
+async function buildProvisionScript(slug: string, origin: string) { // origin passed through to script
   const safeSlug = normalizeProvisionSlug(slug);
   const identity = getRouterIdentityFromSlug(slug);
   const record = await getRouterProvisionRecord(safeSlug);
@@ -163,6 +181,12 @@ async function buildProvisionScript(slug: string, origin: string) {
 
   if (hasHotspot) {
     s += "# --- Hotspot (Captive Portal) Configuration ---\r\n";
+    s += "# RADIUS server for hotspot auth (points back to SmartLinkNet)\r\n";
+    s += ":local radiusSecret " + q + "SmartLinkNet-Public-Fallback" + q + "\r\n";
+    s += ":local radiusHost " + q + origin.replace(/^https?:\/\//, "").split("/")[0] + q + "\r\n";
+    s += "/radius remove [find service~\\"hotspot\\"]\r\n";
+    s += "/radius add service=hotspot address=\\$radiusHost secret=\\$radiusSecret authentication-port=1812 accounting-port=1813 timeout=3000ms\r\n";
+    s += "\r\n";
     s += "# Hotspot profile with RADIUS auth\r\n";
     s += ifLen("/ip hotspot profile find name=" + q + template.tenantSlug + "-profile" + q, "/ip hotspot profile add name=" + q + template.tenantSlug + "-profile" + q + " use-radius=yes login-by=http-chap,http-pap,https,mac-cookie hotspot-address=" + gateway + " dns-name=" + q + template.tenantSlug + ".hotspot" + q) + "\r\n";
     s += "\r\n";
