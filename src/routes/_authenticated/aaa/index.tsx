@@ -13,7 +13,6 @@ import {
   radiusServerPool,
   nasManagement,
   radiusClientService,
-  accountingService,
 } from "@/lib/aaa2";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -118,11 +117,17 @@ function AaaPage() {
   const accounting = useQuery({
     queryKey: ["aaa-accounting", tenantId, accountingSearch, accountingType],
     queryFn: async () => {
-      return accountingService.getRecords(tenantId!, {
-        username: accountingSearch || undefined,
-        statusType: accountingType !== "all" ? (accountingType as any) : undefined,
-        limit: 50,
-      });
+      let q = (supabase as any)
+        .from("auth_events")
+        .select("id, username, event_type, reply_message, received_at, nas_devices(name)")
+        .eq("tenant_id", tenantId!)
+        .order("received_at", { ascending: false })
+        .limit(100);
+      if (accountingSearch) q = q.ilike("username", `%${accountingSearch}%`);
+      if (accountingType !== "all") q = q.eq("event_type", accountingType);
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+      return data ?? [];
     },
     enabled: !!tenantId,
   });
@@ -515,12 +520,15 @@ function AaaPage() {
                 />
               </div>
               <Select value={accountingType} onValueChange={setAccountingType}>
-                <SelectTrigger className="w-48"><SelectValue placeholder="Filter status" /></SelectTrigger>
+                <SelectTrigger className="w-48"><SelectValue placeholder="Filter type" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  <SelectItem value="Start">Start</SelectItem>
-                  <SelectItem value="Stop">Stop</SelectItem>
-                  <SelectItem value="Interim-Update">Interim</SelectItem>
+                  <SelectItem value="all">All events</SelectItem>
+                  <SelectItem value="auth_success">Auth Success</SelectItem>
+                  <SelectItem value="auth_failure">Auth Failure</SelectItem>
+                  <SelectItem value="auth_reject">Auth Reject</SelectItem>
+                  <SelectItem value="acct_start">Acct Start</SelectItem>
+                  <SelectItem value="acct_stop">Acct Stop</SelectItem>
+                  <SelectItem value="acct_update">Acct Update</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -531,20 +539,30 @@ function AaaPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Username</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden lg:table-cell">Framed IP</TableHead>
-                  <TableHead className="hidden xl:table-cell">NAS</TableHead>
+                  <TableHead>Event</TableHead>
+                  <TableHead className="hidden sm:table-cell">NAS</TableHead>
+                  <TableHead className="hidden lg:table-cell">Reply</TableHead>
                   <TableHead>Received</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {accounting.data?.map((row: any) => (
+                {accounting.isLoading ? (
+                  <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Loading...</TableCell></TableRow>
+                ) : accounting.data?.length === 0 ? (
+                  <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No auth events yet. Events are written when MikroTik runs the provisioning script.</TableCell></TableRow>
+                ) : accounting.data?.map((row: any) => (
                   <TableRow key={row.id}>
-                    <TableCell>{row.username}</TableCell>
-                    <TableCell>{row.acctStatusType}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{row.framedIp ?? "—"}</TableCell>
-                    <TableCell className="hidden xl:table-cell">{row.nasIdentifier ?? row.nasId ?? "—"}</TableCell>
-                    <TableCell>{new Date(row.receivedAt).toLocaleString()}</TableCell>
+                    <TableCell className="font-mono text-xs">{row.username}</TableCell>
+                    <TableCell>
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                        row.event_type === "auth_success" || row.event_type === "acct_start" ? "bg-green-500/15 text-green-600"
+                        : row.event_type === "auth_failure" || row.event_type === "auth_reject" ? "bg-red-500/15 text-red-600"
+                        : "bg-muted text-muted-foreground"
+                      }`}>{row.event_type}</span>
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell text-xs">{row.nas_devices?.name ?? "—"}</TableCell>
+                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{row.reply_message ?? "—"}</TableCell>
+                    <TableCell className="text-xs">{new Date(row.received_at).toLocaleString()}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

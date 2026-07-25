@@ -79,7 +79,7 @@ function PPPoEPage() {
   const routers = useQuery({
     queryKey: ["routers-list", tenantId],
     queryFn: async () => {
-      const { data } = await supabase.from("routers").select("id,name").eq("tenant_id", tenantId!).eq("is_active", true);
+      const { data } = await supabase.from("routers").select("id,name").eq("tenant_id", tenantId!).order("name");
       return data ?? [];
     },
     enabled: !!tenantId,
