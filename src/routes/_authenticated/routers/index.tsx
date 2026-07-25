@@ -143,7 +143,13 @@ function RoutersPage() {
   const initialWizardState = typeof window !== "undefined"
     ? (() => {
         try {
-          return JSON.parse(window.sessionStorage.getItem("routers-wizard") ?? "null");
+          const stored = JSON.parse(window.sessionStorage.getItem("routers-wizard") ?? "null");
+          // Only restore state if it's a completed configuration (view is landing)
+          // Don't restore mid-wizard states (step 1-4) to prevent users getting stuck
+          if (stored?.view === "landing") {
+            return stored;
+          }
+          return null;
         } catch {
           return null;
         }
@@ -227,17 +233,34 @@ function RoutersPage() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const state = {
-        view,
-        step,
-        identity,
-        routerId,
-      };
-      window.sessionStorage.setItem("routers-wizard", JSON.stringify(state));
+      // Only save wizard state if we're in landing view (not mid-configuration)
+      if (view === "landing") {
+        const state = {
+          view,
+          step,
+          identity,
+          routerId,
+        };
+        window.sessionStorage.setItem("routers-wizard", JSON.stringify(state));
+      } else {
+        // Don't persist wizard steps to prevent users getting stuck
+        window.sessionStorage.removeItem("routers-wizard");
+      }
     }, 120);
 
     return () => window.clearTimeout(timer);
   }, [view, step, identity, routerId]);
+
+  // Reset wizard state when user changes to prevent cross-user state leakage
+  useEffect(() => {
+    if (!user?.id) return;
+    setView("landing");
+    setStep(1);
+    setIdentity("");
+    setRouterId(null);
+    setLogLines([]);
+    setApplyDone(false);
+  }, [user?.id]);
 
   // Auto-scroll logs when they update
   useEffect(() => {
