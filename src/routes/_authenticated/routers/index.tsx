@@ -891,10 +891,11 @@ function RoutersPage() {
                           <h3 className="font-semibold text-sm">Fallback RADIUS (Public)</h3>
                           <button
                             onClick={() => {
-                              const radiusCmd = `/radius remove [find address=${window.location.hostname}];
-/radius add service=ppp,hotspot address=${window.location.hostname} secret=SmartLinkNet-Public-Fallback realm=10.9.37.1 authentication-port=1812 accounting-port=1813 timeout=3000ms;`;
+                              const serverIp = "142.93.39.55"; // Placeholder - replace with actual IP
+                              const radiusCmd = `/radius remove [find address=${serverIp}];
+/radius add service=ppp,hotspot address=${serverIp} secret=SmartLinkNet-Public-Fallback realm=10.9.37.1 authentication-port=1812 accounting-port=1813 timeout=3000ms;`;
                               navigator.clipboard.writeText(radiusCmd);
-                              toast.success("RADIUS command copied");
+                              toast.success("RADIUS command copied - Replace IP with your actual server IP");
                             }}
                             className="text-xs text-primary hover:underline flex items-center gap-1"
                           >
@@ -904,14 +905,28 @@ function RoutersPage() {
                         </div>
                         <div className="rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 p-4 mb-3">
                           <p className="text-xs text-amber-900 dark:text-amber-200 mb-3">
-                            Paste in RouterOS terminal to add the public fallback RADIUS. Customer auth survives a WireGuard/mesh outage over the WAN. Idempotent: re-running replaces the entry rather than stacking duplicates.
+                            <strong>Important:</strong> Replace <code className="bg-amber-900/20 px-1.5 py-0.5 rounded">142.93.39.55</code> with your actual SmartLinkNet server IP address (not hostname - RouterOS requires IP).
+                          </p>
+                          <p className="text-xs text-amber-800 dark:text-amber-300">
+                            This adds a public fallback RADIUS server. Customer auth survives a WireGuard/mesh outage by retrying over the WAN. Idempotent: re-running replaces the entry rather than stacking duplicates.
                           </p>
                         </div>
-                        <div className="rounded-lg bg-background border border-border p-3">
+                        <div className="rounded-lg bg-background border border-border p-3 mb-3">
                           <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all">
-{`/radius remove [find address=${window.location.hostname}];
-/radius add service=ppp,hotspot address=${window.location.hostname} secret=SmartLinkNet-Public-Fallback realm=10.9.37.1 authentication-port=1812 accounting-port=1813 timeout=3000ms;`}
+{`/radius remove [find address=142.93.39.55];
+/radius add service=ppp,hotspot address=142.93.39.55 secret=SmartLinkNet-Public-Fallback realm=10.9.37.1 authentication-port=1812 accounting-port=1813 timeout=3000ms;`}
                           </pre>
+                        </div>
+                        <div className="rounded-lg bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 p-3">
+                          <p className="text-xs text-blue-800 dark:text-blue-300">
+                            💡 To find your server's public IP:
+                          </p>
+                          <ol className="text-xs text-blue-800 dark:text-blue-300 list-decimal list-inside mt-1 space-y-1">
+                            <li>Go to your server's control panel or cloud provider dashboard</li>
+                            <li>Look for "Public IP" or "External IP"</li>
+                            <li>Replace <code className="bg-blue-900/20 px-1 rounded">142.93.39.55</code> with that IP</li>
+                            <li>Paste and run in MikroTik terminal</li>
+                          </ol>
                         </div>
                       </div>
 
