@@ -162,6 +162,7 @@ function RoutersPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [logLines, setLogLines] = useState<Array<{ ts: string; level: "info" | "success" | "warn" | "error"; icon: string; message: string }>>([]);
   const [applyDone, setApplyDone] = useState(false);
+  const logsEndRef = useRef<HTMLDivElement>(null);
 
   const [pppoe, setPppoe] = useState(false);
   const [hotspot, setHotspot] = useState(false);
@@ -238,6 +239,13 @@ function RoutersPage() {
     return () => window.clearTimeout(timer);
   }, [view, step, identity, routerId]);
 
+  // Auto-scroll logs when they update
+  useEffect(() => {
+    if (logsEndRef.current) {
+      logsEndRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [logLines]);
+
   // Poll DB every 3s on step 2 waiting for router to come online
   useEffect(() => {
     if (step !== 2 || !routerId) return;
@@ -264,12 +272,15 @@ function RoutersPage() {
   async function handleApply() {
     if (!pppoe && !hotspot) { toast.error("Select at least one service type"); return; }
     if (!routerId) { toast.error("Router not found"); return; }
-    
+     
     setStep(4);
     setApplyDone(false);
     setLogLines([]);
+     
+    let hasErrors = false;
 
     const addLog = (message: string, level: "info" | "success" | "warn" | "error" = "info") => {
+      if (level === "error") hasErrors = true;
       const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
       const icon = level === "success" ? "✓" : level === "error" ? "✕" : level === "warn" ? "⚠" : "•";
       setLogLines((prev) => [...prev, { ts, level, icon, message }]);
@@ -349,7 +360,8 @@ function RoutersPage() {
       setApplyDone(true);
     } catch (err: any) {
       addLog(`Error: ${err.message || "Configuration failed"}`, "error");
-      setApplyDone(false);
+      addLog("You can retry the configuration or return to routers list", "info");
+      setApplyDone(true);
     }
   }
 
@@ -656,10 +668,21 @@ function RoutersPage() {
         {/* ── Step 4: Applying configuration ── */}
         {step === 4 && (
           <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
-            <h2 className="font-bold text-base mb-1">{applyDone ? "✓ Configuration Complete" : "Applying configuration..."}</h2>
-            <p className="text-xs text-muted-foreground mb-5">
-              {applyDone ? "Your device is ready to provision subscribers." : "Configuration runs in real-time. Follow the logs below."}
-            </p>
+            {applyDone && logLines.some(l => l.level === "error") ? (
+              <>
+                <h2 className="font-bold text-base mb-1">⚠ Configuration with Errors</h2>
+                <p className="text-xs text-muted-foreground mb-5">
+                  The deployment encountered errors. Review the logs below and try again.
+                </p>
+              </>
+            ) : (
+              <>
+                <h2 className="font-bold text-base mb-1">{applyDone ? "✓ Configuration Complete" : "Applying configuration..."}</h2>
+                <p className="text-xs text-muted-foreground mb-5">
+                  {applyDone ? "Your device is ready to provision subscribers." : "Configuration runs in real-time. Follow the logs below."}
+                </p>
+              </>
+            )}
             
             {/* Status grid */}
             <div className="rounded-xl border border-border bg-background mb-5 overflow-hidden">
@@ -700,6 +723,7 @@ function RoutersPage() {
                         <span className="flex-1">{log.message}</span>
                       </div>
                     ))}
+                    <div ref={logsEndRef} />
                   </div>
                 )}
               </div>
@@ -707,9 +731,22 @@ function RoutersPage() {
 
             {/* Done indicator */}
             {applyDone && (
-              <div className="rounded-xl bg-success/10 border border-success/20 p-4 mb-4">
-                <p className="text-sm text-success font-medium">✓ Device provisioning workflow completed</p>
-                <p className="text-xs text-success/70 mt-1">You can now add subscribers and manage services on this router.</p>
+              <div className={`rounded-xl p-4 mb-4 border ${
+                logLines.some(l => l.level === "error")
+                  ? "bg-destructive/10 border-destructive/20"
+                  : "bg-success/10 border-success/20"
+              }`}>
+                {logLines.some(l => l.level === "error") ? (
+                  <>
+                    <p className="text-sm text-destructive font-medium">⚠ Configuration encountered errors</p>
+                    <p className="text-xs text-destructive/70 mt-1">Check the logs above for details. You can retry after fixing any issues.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-success font-medium">✓ Device provisioning workflow completed</p>
+                    <p className="text-xs text-success/70 mt-1">You can now add subscribers and manage services on this router.</p>
+                  </>
+                )}
               </div>
             )}
           </div>
