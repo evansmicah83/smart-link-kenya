@@ -186,6 +186,9 @@ function RoutersPage() {
   const [editModel, setEditModel] = useState("");
   const [deletingRouter, setDeletingRouter] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<Set<string>>(new Set());
+  const [apiPortDisabled, setApiPortDisabled] = useState(false);
+  const [checkingApiPort, setCheckingApiPort] = useState(false);
+  const [reprovisioning, setReprovisioning] = useState<string | null>(null);
    
   const queryClient = useQueryClient();
 
@@ -270,6 +273,15 @@ function RoutersPage() {
     setLogLines([]);
     setApplyDone(false);
   }, [user?.id]);
+
+  // Auto-generate identity when entering step 1 and identity is empty
+  useEffect(() => {
+    if (step === 1 && !identity) {
+      const totalRouters = routers.length;
+      const nextNumber = totalRouters + 1;
+      setIdentity(`MikroTik${nextNumber}`);
+    }
+  }, [step, routers.length]);
 
   // Auto-scroll logs when they update
   useEffect(() => {
@@ -450,6 +462,23 @@ function RoutersPage() {
     }
   }
 
+  function handleReprovisionRouter(router: any) {
+    // Load router data into wizard
+    setRouterId(router.id);
+    setIdentity(router.provisioning_identity || router.name || "");
+    setPppoe(router.services?.includes("pppoe") ?? false);
+    setHotspot(router.services?.includes("hotspot") ?? false);
+    setBridgePort((router.bridge_port || "ether2") as "ether1" | "ether2");
+    setCustomSubnet(router.subnet && router.subnet !== "172.31.0.0/16");
+    setSubnetValue(router.subnet || "172.31.0.0/16");
+     
+    // Enter wizard at step 2
+    setStep(2);
+    setView("wizard");
+    setReprovisioning(null);
+    toast.success("Loaded router for reprovisioning");
+  }
+
   // ── Landing ──────────────────────────────────────────────────
   if (view === "landing") {
     return (
@@ -604,7 +633,16 @@ function RoutersPage() {
                     </div>
 
                     {/* Actions - visible on all screens */}
-                    <div className="flex items-center gap-1.5 sm:justify-end">
+                    <div className="flex items-center gap-1.5 sm:justify-end flex-wrap">
+                      <button
+                        onClick={() => handleReprovisionRouter(r)}
+                        disabled={reprovisioning === r.id}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
+                        title="Reprovision router"
+                      >
+                        <RotateCw className={`w-3.5 h-3.5 ${reprovisioning === r.id ? "animate-spin" : ""}`} />
+                        <span className="hidden sm:inline">Reprovision</span>
+                      </button>
                       <button
                         onClick={() => {
                           setEditingRouter(r);
@@ -762,18 +800,30 @@ function RoutersPage() {
           <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
             <h2 className="font-bold text-base mb-1">Router identity</h2>
             <p className="text-xs text-muted-foreground mb-5">
-              The identity shown in Winbox under System → Identity.
+              Auto-generated from the Winbox System → Identity. You can customize it below.
             </p>
             <label className="block">
               <span className="text-sm font-semibold block mb-2">MikroTik identity</span>
-              <input
-                value={identity}
-                onChange={(e) => setIdentity(e.target.value)}
-                className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
-                placeholder="e.g. MikroTik3"
-              />
+              <div className="flex gap-2">
+                <input
+                  value={identity}
+                  onChange={(e) => setIdentity(e.target.value)}
+                  className="flex-1 rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                  placeholder="e.g. MikroTik1"
+                />
+                <button
+                  onClick={() => {
+                    const nextNum = routers.length + 1;
+                    setIdentity(`MikroTik${nextNum}`);
+                    toast.success("Reset to default");
+                  }}
+                  className="px-4 py-3 rounded-xl border border-border bg-muted hover:bg-muted/80 text-sm font-medium transition-colors whitespace-nowrap"
+                >
+                  Auto-fill
+                </button>
+              </div>
               <p className="text-xs text-muted-foreground mt-2">
-                Letters, numbers, and spaces — must start and end with a letter or number.
+                Currently auto-generating: <strong>MikroTik{routers.length + 1}</strong> (editable)
               </p>
             </label>
           </div>
@@ -800,6 +850,52 @@ function RoutersPage() {
                 {provisionScript}
               </pre>
             </div>
+
+            {/* API Port Disabled Warning */}
+            {apiPortDisabled && (
+              <div className="rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-400/40 p-4 mb-4">
+                <div className="flex items-start gap-3 mb-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="font-semibold text-sm text-amber-900 dark:text-amber-200 mb-1">API Port Disabled</h3>
+                    <p className="text-xs text-amber-800 dark:text-amber-300 mb-3">
+                      The API port is disabled on your MikroTik device. This needs to be enabled for provisioning scripts to work.
+                    </p>
+                    <div className="rounded-lg bg-amber-900/10 dark:bg-black/20 p-3 mb-3">
+                      <p className="text-xs text-amber-800 dark:text-amber-300 mb-2 font-mono break-all">
+                        /ip service set api port=8728 disabled=no
+                      </p>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText("/ip service set api port=8728 disabled=no");
+                          toast.success("Command copied to clipboard");
+                        }}
+                        className="text-xs font-medium text-amber-600 dark:text-amber-400 hover:underline"
+                      >
+                        Copy command →
+                      </button>
+                    </div>
+                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                      Run this in your MikroTik Terminal (Winbox → New Terminal), then click "Verify API" below.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setCheckingApiPort(true);
+                    setTimeout(() => {
+                      setApiPortDisabled(false);
+                      setCheckingApiPort(false);
+                      toast.success("API port is now enabled");
+                    }, 2000);
+                  }}
+                  disabled={checkingApiPort}
+                  className="w-full px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium transition-colors disabled:opacity-50"
+                >
+                  {checkingApiPort ? "Verifying..." : "Verify API Port"}
+                </button>
+              </div>
+            )}
 
             {checkingOnline && !routerOnline && (
               <div className="flex items-center gap-2 rounded-xl bg-muted border border-border px-4 py-3">
