@@ -123,6 +123,31 @@ async function markRouterOnline(slug: string, request: Request) {
         nasDeviceId = inserted?.id ?? null;
       }
 
+      // Auto-upsert radius_clients so the AAA Clients tab is populated
+      if (forwardedFor) {
+        const { data: existingClient } = await supabaseAdmin
+          .from("radius_clients")
+          .select("id")
+          .eq("tenant_id", tenantId)
+          .eq("client_ip", forwardedFor)
+          .maybeSingle();
+        const clientPayload = {
+          tenant_id: tenantId,
+          name: routerName,
+          client_ip: forwardedFor,
+          shared_secret: "SmartLinkNet-Public-Fallback",
+          vendor: "mikrotik",
+          is_active: true,
+          last_seen: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        if (existingClient?.id) {
+          await supabaseAdmin.from("radius_clients").update(clientPayload).eq("id", existingClient.id);
+        } else {
+          await supabaseAdmin.from("radius_clients").insert(clientPayload);
+        }
+      }
+
       // Write an auth_success event so AAA stats reflect the router check-in
       if (nasDeviceId) {
         await supabaseAdmin.from("auth_events").insert({
