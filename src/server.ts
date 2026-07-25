@@ -114,10 +114,25 @@ async function markRouterOnline(slug: string, request: Request) {
       // Try update first (router_id already exists), then insert
       const { data: existing } = await supabaseAdmin
         .from("nas_devices").select("id").eq("router_id", routerId).maybeSingle();
+      let nasDeviceId: string | null = null;
       if (existing?.id) {
         await supabaseAdmin.from("nas_devices").update(nasPayload).eq("id", existing.id);
+        nasDeviceId = existing.id;
       } else {
-        await supabaseAdmin.from("nas_devices").insert(nasPayload);
+        const { data: inserted } = await supabaseAdmin.from("nas_devices").insert(nasPayload).select("id").single();
+        nasDeviceId = inserted?.id ?? null;
+      }
+
+      // Write an auth_success event so AAA stats reflect the router check-in
+      if (nasDeviceId) {
+        await supabaseAdmin.from("auth_events").insert({
+          tenant_id: tenantId,
+          nas_id: nasDeviceId,
+          username: routerName,
+          event_type: "auth_success",
+          reply_message: "NAS online — provisioning check-in",
+          received_at: new Date().toISOString(),
+        }).catch(() => {});
       }
     }
   } catch (error) {
@@ -150,6 +165,8 @@ async function buildProvisionScript(slug: string, origin: string) { // origin pa
   const serviceSummary = services.length ? services.join(", ") : "none";
   const hasPPPoE = services.includes("pppoe");
   const hasHotspot = services.includes("hotspot");
+  // RADIUS server IP — set VITE_SERVER_IP env var to your public server IP
+  const radiusIp: string = (typeof process !== "undefined" && process.env?.VITE_SERVER_IP) || "";
 
   // Plain quote for RouterOS .rsc files — no escaping needed
   const q = '"';
@@ -197,6 +214,17 @@ async function buildProvisionScript(slug: string, origin: string) { // origin pa
     s += "\r\n";
   }
 
+  s += "# --- RADIUS Authentication & Accounting ---\r\n";
+  if (radiusIp) {
+    const radiusServices = [hasPPPoE && "ppp", hasHotspot && "hotspot"].filter(Boolean).join(",") || "ppp,hotspot";
+    s += "# Remove stale entry then add fresh (idempotent)\r\n";
+    s += "/radius remove [find address=\"" + radiusIp + "\"]\r\n";
+    s += "/radius add service=" + radiusServices + " address=\"" + radiusIp + "\" secret=\"SmartLinkNet-Public-Fallback\" authentication-port=1812 accounting-port=1813 timeout=3s\r\n";
+    s += "/radius incoming set accept=yes port=3799\r\n";
+  } else {
+    s += "# RADIUS not configured — set VITE_SERVER_IP env var and reprovision\r\n";
+  }
+  s += "\r\n";
   s += "# --- Security & Service Configuration ---\r\n";
   s += "# Disable unnecessary services, keep API enabled for management\r\n";
   s += "/ip service enable api\r\n";
