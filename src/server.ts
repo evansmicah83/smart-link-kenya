@@ -184,7 +184,8 @@ async function buildProvisionScript(slug: string, origin: string) { // origin pa
     s += "# RADIUS server for hotspot auth (points back to SmartLinkNet)\r\n";
     s += ":local radiusSecret " + q + "SmartLinkNet-Public-Fallback" + q + "\r\n";
     s += ":local radiusHost " + q + origin.replace(/^https?:\/\//, "").split("/")[0] + q + "\r\n";
-    s += "/radius remove [find service~\\"hotspot\\"]\r\n";
+    const radiusRemoveCmd = "/radius remove [find service~" + q + "hotspot" + q + "]";
+    s += radiusRemoveCmd + "\r\n";
     s += "/radius add service=hotspot address=\\$radiusHost secret=\\$radiusSecret authentication-port=1812 accounting-port=1813 timeout=3000ms\r\n";
     s += "\r\n";
     s += "# Hotspot profile with RADIUS auth\r\n";
