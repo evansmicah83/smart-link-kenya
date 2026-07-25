@@ -154,32 +154,29 @@ async function buildProvisionScript(slug: string, origin: string) {
   s += "\r\n";
 
   if (hasPPPoE) {
-    s += "# --- PPPoE Configuration ---\r\n";
-    s += "# PPPoE interface for broadband subscriber connections\r\n";
-    s += ifLen("/interface pppoe-client find name=" + q + "pppoe-" + template.tenantSlug + q, "/interface pppoe-client add interface=" + template.bridgePort + " name=" + q + "pppoe-" + template.tenantSlug + q + " max-packet-size=1480 disabled=no") + "\r\n";
+    s += "# --- PPPoE Server Configuration ---\r\n";
+    s += "# PPPoE server for broadband subscriber connections\r\n";
+    s += ifLen("/interface pppoe-server server find interface=\\$bridgeName", "/interface pppoe-server server add interface=\\$bridgeName service-name=" + q + template.tenantSlug + q + " authentication=mschap2,mschap1,chap,pap disabled=no") + "\r\n";
     s += "# PPPoE users are managed via RADIUS or User Manager\r\n";
     s += "\r\n";
   }
 
   if (hasHotspot) {
-    s += "# --- Hotspot Configuration ---\r\n";
-    s += "# Hotspot (Captive Portal) for prepaid/voucher subscribers\r\n";
-    s += "# User database location: /ip hotspot user\r\n";
-    s += "# Authentication via User Manager or RADIUS\r\n";
+    s += "# --- Hotspot (Captive Portal) Configuration ---\r\n";
+    s += "# Hotspot profile with RADIUS auth\r\n";
+    s += ifLen("/ip hotspot profile find name=" + q + template.tenantSlug + "-profile" + q, "/ip hotspot profile add name=" + q + template.tenantSlug + "-profile" + q + " use-radius=yes login-by=http-chap,http-pap,https,mac-cookie hotspot-address=" + gateway + " dns-name=" + q + template.tenantSlug + ".hotspot" + q) + "\r\n";
     s += "\r\n";
     s += "# Enable Hotspot on bridge interface\r\n";
-    s += ifLen("/ip hotspot find interface=\\$bridgeName", "/ip hotspot add name=" + q + template.tenantSlug + "-hotspot" + q + " interface=\\$bridgeName identity=" + q + identity + q + " disabled=no") + "\r\n";
-    s += "\r\n";
-    s += "# Configure Hotspot profile for subscribers\r\n";
-    s += ifLen("/ip hotspot profile find name=" + q + template.tenantSlug + "-profile" + q, "/ip hotspot profile add name=" + q + template.tenantSlug + "-profile" + q) + "\r\n";
+    s += ifLen("/ip hotspot find interface=\\$bridgeName", "/ip hotspot add name=" + q + template.tenantSlug + "-hotspot" + q + " interface=\\$bridgeName address-pool=\\$bridgeName profile=" + q + template.tenantSlug + "-profile" + q + " disabled=no") + "\r\n";
     s += "\r\n";
     s += "# Hotspot users created via /ip hotspot user or User Manager API\r\n";
     s += "\r\n";
   }
 
   s += "# --- Security & Service Configuration ---\r\n";
-  s += "# Disable unnecessary services\r\n";
-  s += "/ip service disable api\r\n";
+  s += "# Disable unnecessary services, keep API enabled for management\r\n";
+  s += "/ip service enable api\r\n";
+  s += "/ip service set api port=8728\r\n";
   s += "/ip service disable ftp\r\n";
   s += "/ip service enable www\r\n";
   s += "/ip service enable ssh\r\n";
