@@ -1,4 +1,4 @@
-const CACHE = "smartlinknet-v1";
+const CACHE = "smartlinknet-v__DEPLOY_TS__";
 const OFFLINE_URL = "/dashboard";
 
 const PRECACHE = [
@@ -9,6 +9,15 @@ const PRECACHE = [
   "/icon-512.png",
   "/favicon.ico",
 ];
+
+// Never cache hashed JS/CSS chunks — the browser handles those via content-hash filenames.
+// Only cache static shell assets and navigation requests for offline support.
+function shouldCache(url) {
+  const u = new URL(url);
+  if (u.pathname.startsWith("/assets/")) return false;
+  if (u.pathname.match(/\.[0-9a-f]{8}\./)) return false;
+  return true;
+}
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
@@ -27,6 +36,8 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   if (e.request.url.includes("/api/") || e.request.url.includes("supabase")) return;
+  // Let hashed asset chunks go straight to network — never intercept them.
+  if (!shouldCache(e.request.url)) return;
 
   e.respondWith(
     caches.match(e.request).then((cached) => {
