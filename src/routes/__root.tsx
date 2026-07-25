@@ -114,6 +114,14 @@ function RootComponent() {
       if (event !== "SIGNED_OUT") qc.invalidateQueries();
     });
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+      // Wipe any old SW registrations and their caches so stale JS chunks never get served
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        regs.forEach((reg) => reg.unregister());
+      });
+      caches.keys().then((keys) => {
+        keys.filter((k) => k.startsWith("smartlinknet-")).forEach((k) => caches.delete(k));
+      });
+      // Re-register fresh
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
     return () => sub.subscription.unsubscribe();
