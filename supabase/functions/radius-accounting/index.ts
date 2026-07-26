@@ -125,11 +125,8 @@ serve(async (req) => {
         }
       }
 
-      // Record auth event
       await sb.from("auth_events").insert({
         tenant_id: resolvedTenantId, username,
-        customer_id: sub?.customer_id ?? null,
-        subscription_id: sub?.id ?? null,
         nas_id: nasDeviceId,
         event_type: "acct_start", received_at: now(),
       }).catch(() => {});
@@ -141,7 +138,7 @@ serve(async (req) => {
 
       await sb.from("auth_events").insert({
         tenant_id: resolvedTenantId, username,
-        customer_id: sub?.customer_id ?? null, nas_id: nasDeviceId,
+        nas_id: nasDeviceId,
         event_type: "acct_update", received_at: now(),
       }).catch(() => {});
 
@@ -162,7 +159,7 @@ serve(async (req) => {
 
       await sb.from("auth_events").insert({
         tenant_id: resolvedTenantId, username,
-        customer_id: sub?.customer_id ?? null, nas_id: nasDeviceId,
+        nas_id: nasDeviceId,
         event_type: "acct_stop", received_at: now(),
       }).catch(() => {});
 
