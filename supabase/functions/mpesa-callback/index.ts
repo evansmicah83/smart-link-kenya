@@ -126,7 +126,7 @@ serve(async (req) => {
         }
 
         // ── Phase 3: Trigger payment_success workflow via provisioning engine ──
-        await supabase.rpc("fn_initiate_workflow", {
+        const { data: wfData } = await supabase.rpc("fn_initiate_workflow", {
           _tenant_id:           payment.tenant_id,
           _type:                "payment_success",
           _payload:             {
@@ -141,11 +141,14 @@ serve(async (req) => {
           _trigger_entity_id:   payment.id,
           _trigger_entity_type: "payment",
           _max_retries:         3,
-        }).catch(() => {
-          // Fallback: direct subscription activation if workflow engine unavailable
-          supabase.from("subscriptions").update({ status: "active" })
-            .eq("customer_id", payment.customer_id).eq("status", "pending");
-        });
+        }).catch(() => ({ data: null }));
+
+        // Immediately run the workflow (don't wait for queue-worker cron)
+        if (wfData) {
+          supabase.functions.invoke("run-provisioning", {
+            body: { workflow_id: wfData },
+          }).catch(() => {});
+        }
       }
     } else if (resultCode !== 0) {
       // Mark as failed, then trigger payment_failure workflow

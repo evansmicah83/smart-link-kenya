@@ -78,34 +78,33 @@ serve(async (req) => {
       .eq("tenant_id", resolvedTenantId)
       .maybeSingle();
 
-    const recordEvent = async (eventType: string, replyMsg: string | null) => {
+    const recordEvent = async (eventType: string) => {
       await sb.from("auth_events").insert({
-        tenant_id: resolvedTenantId, username,
-        customer_id: sub?.customer_id ?? null,
-        subscription_id: sub?.id ?? null,
-        nas_id: nasDeviceId, event_type: eventType,
-        mac_address: calling_station_id ?? null,
-        nas_port: nas_port ?? null,
-        reply_message: replyMsg,
+        tenant_id: resolvedTenantId,
+        username,
+        nas_id: nasDeviceId,
+        event_type: eventType,
+        nas_identifier: nas_identifier ?? null,
+        raw_attrs: { calling_station_id, nas_port, nas_ip },
         received_at: now(),
       }).catch(() => {});
     };
 
     // 3. Validate
     if (!sub) {
-      await recordEvent("auth_reject", "User not found");
+      await recordEvent("auth_reject");
       return json({ accepted: false, reply_message: "User not found" }, 200);
     }
     if (sub.status !== "active") {
-      await recordEvent("auth_reject", `Service ${sub.status}`);
+      await recordEvent("auth_reject");
       return json({ accepted: false, reply_message: `Service ${sub.status}` }, 200);
     }
     if (sub.expires_at && new Date(sub.expires_at) < new Date()) {
-      await recordEvent("auth_reject", "Subscription expired");
+      await recordEvent("auth_reject");
       return json({ accepted: false, reply_message: "Subscription expired" }, 200);
     }
     if (request_type === "auth" && password && sub.password && sub.password !== password) {
-      await recordEvent("auth_failure", "Bad password");
+      await recordEvent("auth_failure");
       return json({ accepted: false, reply_message: "Invalid credentials" }, 200);
     }
 
@@ -120,7 +119,7 @@ serve(async (req) => {
     const rateLimit = buildRateLimit(profile);
 
     // 5. Build reply
-    await recordEvent("auth_success", null);
+    await recordEvent("auth_success");
     if (nasDeviceId) {
       await sb.from("nas_devices").update({ last_seen: now() }).eq("id", nasDeviceId).catch(() => {});
     }

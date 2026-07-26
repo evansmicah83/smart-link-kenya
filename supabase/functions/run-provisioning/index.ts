@@ -87,6 +87,13 @@ async function stepCreateSubscription(sb: any, input: Record<string, unknown>) {
   const days = pkg?.duration_days ?? 30;
   const expiresAt = new Date(Date.now() + days * 86_400_000).toISOString();
 
+  // Derive a username from customer phone if not already set
+  let username: string | null = null;
+  if (input["customer_id"]) {
+    const { data: cust } = await sb.from("customers").select("phone").eq("id", input["customer_id"]).maybeSingle();
+    if (cust?.phone) username = cust.phone.replace(/\D/g, "").slice(-9); // last 9 digits
+  }
+
   const { data: existing } = await sb
     .from("subscriptions")
     .select("id, expires_at, status")
@@ -100,12 +107,12 @@ async function stepCreateSubscription(sb: any, input: Record<string, unknown>) {
     const newExpiry = existing.status === "active" && existing.expires_at
       ? new Date(Math.max(Date.parse(existing.expires_at), Date.now()) + days * 86_400_000).toISOString()
       : expiresAt;
-    await sb.from("subscriptions").update({ status: "active", expires_at: newExpiry, updated_at: now() }).eq("id", existing.id);
+    await sb.from("subscriptions").update({ status: "active", expires_at: newExpiry, updated_at: now(), ...(username && !existing.username ? { username, password: username } : {}) }).eq("id", existing.id);
     subscriptionId = existing.id;
   } else {
     const { data: newSub, error } = await sb
       .from("subscriptions")
-      .insert({ tenant_id: input["tenant_id"], customer_id: input["customer_id"], package_id: input["package_id"], status: "active", expires_at: expiresAt })
+      .insert({ tenant_id: input["tenant_id"], customer_id: input["customer_id"], package_id: input["package_id"], status: "active", expires_at: expiresAt, ...(username ? { username, password: username } : {}) })
       .select("id").single();
     if (error) throw new Error(error.message);
     subscriptionId = newSub.id;
@@ -145,9 +152,18 @@ async function stepUpdateRadius(sb: any, input: Record<string, unknown>) {
 }
 
 async function stepActivateRouterUser(sb: any, input: Record<string, unknown>) {
-  const { data: sub } = await sb.from("subscriptions").select("router_id, username, password, type, profile, pool_name").eq("id", input["subscription_id"]).maybeSingle();
-  if (!sub?.router_id) return { skipped: true, reason: "no_router" };
-  if (!sub.username)   return { skipped: true, reason: "no_username" };
+  const { data: sub } = await sb.from("subscriptions").select("router_id, username, password, type, profile, pool_name, tenant_id, customer_id").eq("id", input["subscription_id"]).maybeSingle();
+  if (!sub) return { skipped: true, reason: "no_subscription" };
+  if (!sub.username) return { skipped: true, reason: "no_username" };
+
+  // Fall back to tenant's first active router if subscription has none
+  let routerId = sub.router_id;
+  if (!routerId) {
+    const { data: router } = await sb.from("routers").select("id").eq("tenant_id", sub.tenant_id ?? input["tenant_id"]).eq("status", "online").limit(1).maybeSingle();
+    if (!router) return { skipped: true, reason: "no_router" };
+    routerId = router.id;
+    await sb.from("subscriptions").update({ router_id: routerId }).eq("id", input["subscription_id"]);
+  }
 
   const subType: string = sub.type ?? "hotspot";
   const command = subType === "pppoe" ? "add_pppoe_user" : "add_hotspot_user";
@@ -156,11 +172,11 @@ async function stepActivateRouterUser(sb: any, input: Record<string, unknown>) {
   if (sub.pool_name) params["pool_name"] = sub.pool_name;
 
   const { error } = await sb.functions.invoke("router-command", {
-    body: { routerId: sub.router_id, command, params },
+    body: { routerId, command, params },
   });
   if (error) throw new Error(`Router activation failed: ${error.message}`);
-  await sb.from("provisioning_events").insert({ tenant_id: input["tenant_id"], subscription_id: input["subscription_id"], router_id: sub.router_id, event: "provisioned", username: sub.username, adapter_type: "mikrotik_rest" }).catch(() => {});
-  return { activated: true, router_id: sub.router_id, username: sub.username, sub_type: subType };
+  await sb.from("provisioning_events").insert({ tenant_id: input["tenant_id"], subscription_id: input["subscription_id"], router_id: routerId, event: "provisioned", username: sub.username, adapter_type: "mikrotik_rest" }).catch(() => {});
+  return { activated: true, router_id: routerId, username: sub.username, sub_type: subType };
 }
 
 async function stepSendNotification(sb: any, input: Record<string, unknown>) {

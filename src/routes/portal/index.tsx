@@ -116,7 +116,17 @@ function CaptivePortal() {
         clearInterval(pollRef.current);
         setSuccessMsg("Payment confirmed! You are now connected.");
         setPage("success");
-        if (url) setTimeout(() => { window.location.href = url; }, 3000);
+        if (url) {
+          // MikroTik expects redirect to its login page which then grants access
+          // $(link-orig) is the original URL — redirecting there directly bypasses MikroTik auth
+          // Instead redirect to MikroTik's alogin page which sets the auth cookie
+          setTimeout(() => {
+            // Try MikroTik alogin (auto-login) URL first, fallback to original url
+            const loginUrl = new URL(url);
+            const mikrotikLogin = `${loginUrl.protocol}//${loginUrl.hostname}/login?dst=${encodeURIComponent(url)}`;
+            window.location.href = mikrotikLogin;
+          }, 2500);
+        }
       } else if (data?.status === "failed") {
         clearInterval(pollRef.current);
         setError("Payment failed or was cancelled. Please try again.");
@@ -170,6 +180,7 @@ function CaptivePortal() {
           status: "pending",
           phone: fmtPhone,
           notes: `Portal purchase: ${selectedPkg.name}`,
+          package_id: selectedPkg.id,
         })
         .select("id")
         .single();
@@ -224,7 +235,13 @@ function CaptivePortal() {
 
       setSuccessMsg(`Voucher accepted! Connected with ${(data as any).packages?.name ?? "internet access"}.`);
       setPage("success");
-      if (url) setTimeout(() => { window.location.href = url; }, 2500);
+      if (url) {
+        setTimeout(() => {
+          const loginUrl = new URL(url);
+          const mikrotikLogin = `${loginUrl.protocol}//${loginUrl.hostname}/login?dst=${encodeURIComponent(url)}`;
+          window.location.href = mikrotikLogin;
+        }, 2500);
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
