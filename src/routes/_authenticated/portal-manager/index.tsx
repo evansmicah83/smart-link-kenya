@@ -68,7 +68,7 @@ function PortalManagerPage() {
   const slug = tenant.data?.slug ?? "";
   const portalUrl = slug ? `${window.location.origin}/portal?isp=${slug}` : "";
   const mikrotikRedirect = slug
-    ? `http://$(dst-ip)/portal?isp=${slug}&mac=$(mac)&ip=$(ip)&url=$(link-orig)`
+    ? `https://smart-link-kenya.vercel.app/portal?isp=${slug}&mac=$(mac)&ip=$(ip)&url=$(link-orig)&dst=$(dst-ip)`
     : "";
 
   function copyUrl(text: string) {
@@ -146,19 +146,27 @@ function PortalManagerPage() {
                 <p className="font-medium text-foreground">MikroTik Configuration Steps:</p>
                 <ol className="list-decimal list-inside space-y-1">
                   <li>Go to <span className="font-mono">IP → Hotspot → Server Profiles</span></li>
-                  <li>Set <span className="font-mono">Login Page</span> to the URL above</li>
-                  <li>Enable <span className="font-mono">Use RADIUS</span> or use built-in auth</li>
-                  <li>Set <span className="font-mono">Walled Garden</span> to allow your portal domain</li>
+                  <li>Open your hotspot server profile → <span className="font-mono">Login</span> tab</li>
+                  <li>Set <span className="font-mono">Login By</span> to <span className="font-mono">HTTP PAP</span></li>
+                  <li>Set <span className="font-mono">HTML Directory</span> to <span className="font-mono">hotspot</span> (default)</li>
+                  <li>Go to <span className="font-mono">IP → Hotspot → Walled Garden</span> and add the domains below</li>
+                  <li>In <span className="font-mono">/ip hotspot profile</span> set <span className="font-mono">login-page</span> to the URL above via terminal</li>
                 </ol>
+                <div className="mt-2 rounded bg-black/20 p-2 font-mono text-[10px] text-slate-300 whitespace-pre-wrap">{`/ip hotspot profile set [find] login-page="${mikrotikRedirect}"`}</div>
               </div>
               <div className="grid grid-cols-2 gap-3 text-xs">
                 <div className="rounded-lg border border-border/60 p-3">
-                  <div className="font-medium mb-1">RADIUS Setup</div>
-                  <p className="text-muted-foreground">Point RADIUS auth to your Supabase edge function endpoint for automated session management.</p>
+                  <div className="font-medium mb-1">How it works</div>
+                  <p className="text-muted-foreground">After payment, the portal POSTs the user's phone number as username+password to MikroTik's <span className="font-mono">/login</span> endpoint. MikroTik checks its hotspot user list and grants access.</p>
                 </div>
                 <div className="rounded-lg border border-border/60 p-3">
-                  <div className="font-medium mb-1">Walled Garden</div>
-                  <p className="text-muted-foreground">Allow: <span className="font-mono">{window.location.hostname}</span>, safaricom.com, mpesa.safaricom.co.ke</p>
+                  <div className="font-medium mb-1">Walled Garden — allow these</div>
+                  <p className="text-muted-foreground font-mono text-[10px] leading-5">
+                    smart-link-kenya.vercel.app<br />
+                    tghaarhofriakwgvqmpm.supabase.co<br />
+                    safaricom.com<br />
+                    mpesa.safaricom.co.ke
+                  </p>
                 </div>
               </div>
             </div>

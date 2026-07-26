@@ -18,6 +18,8 @@ const searchSchema = z.object({
   mac: z.string().optional(),
   ip: z.string().optional(),
   url: z.string().optional(),
+  // MikroTik passes $(dst-ip) — the router's own IP — needed for login POST
+  dst: z.string().optional(),
 });
 
 export const Route = createFileRoute("/portal/")(({
@@ -49,8 +51,26 @@ interface Pkg {
   is_popular?: boolean;
 }
 
+// Auto-submits a hidden form POST to MikroTik's /login endpoint.
+// This is the standard way MikroTik captive portals grant internet access.
+function mikrotikLogin(routerIp: string, username: string, dst: string) {
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = `http://${routerIp}/login`;
+  const fields = { username, password: username, dst };
+  for (const [k, v] of Object.entries(fields)) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = k;
+    input.value = v;
+    form.appendChild(input);
+  }
+  document.body.appendChild(form);
+  form.submit();
+}
+
 function CaptivePortal() {
-  const { isp, mac, ip, url } = useSearch({ from: "/portal/" });
+  const { isp, mac, ip, url, dst } = useSearch({ from: "/portal/" });
 
   const [page, setPage] = useState<Page>("landing");
   const [brand, setBrand] = useState<Brand>({});
@@ -64,6 +84,7 @@ function CaptivePortal() {
   const [phone, setPhone] = useState("");
   const [paying, setPaying] = useState(false);
   const [paymentId, setPaymentId] = useState<string | null>(null);
+  const [loginUsername, setLoginUsername] = useState("");
   const pollRef = useRef<any>(null);
 
   // Voucher flow
@@ -116,16 +137,13 @@ function CaptivePortal() {
         clearInterval(pollRef.current);
         setSuccessMsg("Payment confirmed! You are now connected.");
         setPage("success");
-        if (url) {
-          // MikroTik expects redirect to its login page which then grants access
-          // $(link-orig) is the original URL — redirecting there directly bypasses MikroTik auth
-          // Instead redirect to MikroTik's alogin page which sets the auth cookie
-          setTimeout(() => {
-            // Try MikroTik alogin (auto-login) URL first, fallback to original url
-            const loginUrl = new URL(url);
-            const mikrotikLogin = `${loginUrl.protocol}//${loginUrl.hostname}/login?dst=${encodeURIComponent(url)}`;
-            window.location.href = mikrotikLogin;
-          }, 2500);
+        // Standard MikroTik captive portal login:
+        // POST username+password to router's /login endpoint so it grants access.
+        // dst is the router IP passed as $(dst-ip) in the hotspot redirect URL.
+        if (dst && loginUsername) {
+          setTimeout(() => mikrotikLogin(dst, loginUsername, url ?? ""), 2000);
+        } else if (url) {
+          setTimeout(() => { window.location.href = url; }, 2500);
         }
       } else if (data?.status === "failed") {
         clearInterval(pollRef.current);
@@ -202,6 +220,8 @@ function CaptivePortal() {
         .update({ reference: result.checkoutRequestId })
         .eq("id", payment.id);
 
+      // Save username (last 9 digits of phone) — used for MikroTik login POST
+      setLoginUsername(fmtPhone.replace(/\D/g, "").slice(-9));
       setPaymentId(payment.id);
       setPage("payment");
     } catch (e: any) {
@@ -235,12 +255,12 @@ function CaptivePortal() {
 
       setSuccessMsg(`Voucher accepted! Connected with ${(data as any).packages?.name ?? "internet access"}.`);
       setPage("success");
-      if (url) {
-        setTimeout(() => {
-          const loginUrl = new URL(url);
-          const mikrotikLogin = `${loginUrl.protocol}//${loginUrl.hostname}/login?dst=${encodeURIComponent(url)}`;
-          window.location.href = mikrotikLogin;
-        }, 2500);
+      // For vouchers, use the voucher code itself as the username on MikroTik
+      // (ISP must create a matching hotspot user with the voucher code as username/password)
+      if (dst && voucher) {
+        setTimeout(() => mikrotikLogin(dst, voucher.trim().toUpperCase(), url ?? ""), 2000);
+      } else if (url) {
+        setTimeout(() => { window.location.href = url; }, 2500);
       }
     } catch (e: any) {
       setError(e.message);
