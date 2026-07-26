@@ -59,6 +59,7 @@ function CaptivePortal() {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
+  const [otpCode, setOtpCode] = useState<string | null>(null);
   const [voucher, setVoucher] = useState("");
   const [selectedPkg, setSelectedPkg] = useState<Package | null>(null);
   const [loading, setLoading] = useState(false);
@@ -80,7 +81,7 @@ function CaptivePortal() {
 
       const [brandRes, pkgRes] = await Promise.all([
         (supabase as any).from("tenant_branding").select("*").eq("tenant_id", tenant.id).maybeSingle(),
-        (supabase as any).from("packages").select("*").eq("tenant_id", tenant.id).eq("is_active", true).in("type", ["hotspot", "voucher"]).order("price"),
+        (supabase as any).from("packages").select("*").eq("tenant_id", tenant.id).eq("is_active", true).order("price"),
       ]);
       if (brandRes.data) setBrand({ ...brandRes.data, company_name: tenant.name });
       else setBrand({ company_name: tenant.name });
@@ -145,10 +146,13 @@ function CaptivePortal() {
 
   async function handleSendOtp() {
     setLoading(true);
+    setError("");
     try {
       const fmtPhone = formatPhone(phone);
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+      setOtpCode(code);
       await (supabase as any).functions.invoke("send-sms", {
-        body: { phone: fmtPhone, message: `Your WiFi OTP is: ${Math.floor(100000 + Math.random() * 900000)}`, tenant_id: tenantId },
+        body: { phone: fmtPhone, message: `Your WiFi OTP is: ${code}. Valid for 5 minutes.`, tenant_id: tenantId },
       });
       setOtpSent(true);
     } catch (e: any) {
@@ -156,6 +160,15 @@ function CaptivePortal() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleVerifyOtp() {
+    if (otp.trim() !== otpCode) {
+      setError("Incorrect OTP. Please try again.");
+      return;
+    }
+    setError("");
+    setPage("packages");
   }
 
   async function handleStkPush() {
@@ -250,6 +263,58 @@ function CaptivePortal() {
               </div>
               {brand.support_phone && (
                 <p className="text-center text-xs text-slate-500 pt-2">Need help? <a href={`tel:${brand.support_phone}`} className="text-primary hover:underline">{brand.support_phone}</a></p>
+              )}
+            </div>
+          )}
+
+          {/* Login — phone OTP */}
+          {page === "login" && loginMode === "phone" && (
+            <div className="p-6 space-y-4">
+              <BackBtn onClick={() => setPage("landing")} />
+              <h2 className="text-lg font-bold text-white">Phone Verification</h2>
+              {!otpSent ? (
+                <>
+                  <p className="text-sm text-slate-400">Enter your phone number to receive an OTP</p>
+                  <input
+                    className="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-white placeholder:text-slate-500 focus:outline-none focus:border-primary"
+                    placeholder="07XX XXX XXX"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    type="tel"
+                  />
+                  {error && <ErrorMsg msg={error} />}
+                  <button
+                    onClick={handleSendOtp}
+                    disabled={loading || phone.length < 9}
+                    className="w-full rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    Send OTP
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-slate-400">Enter the 6-digit code sent to <span className="text-white">{phone}</span></p>
+                  <input
+                    className="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-white text-center text-xl font-mono tracking-widest placeholder:text-slate-500 focus:outline-none focus:border-primary"
+                    placeholder="000000"
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    maxLength={6}
+                    inputMode="numeric"
+                  />
+                  {error && <ErrorMsg msg={error} />}
+                  <button
+                    onClick={handleVerifyOtp}
+                    disabled={otp.length < 6}
+                    className="w-full rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                  >
+                    Verify & Continue
+                  </button>
+                  <button onClick={() => { setOtpSent(false); setOtp(""); setError(""); }} className="text-xs text-slate-500 hover:text-white underline w-full text-center">
+                    Resend OTP
+                  </button>
+                </>
               )}
             </div>
           )}

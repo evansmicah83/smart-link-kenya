@@ -65,10 +65,11 @@ function PortalManagerPage() {
     onError: (e: any) => toast.error(e.message),
   });
 
-  const portalUrl = `${window.location.origin}/portal?isp=${tenant.data?.slug ?? ""}`;
-
-  // MikroTik redirect URL for hotspot login page
-  const mikrotikRedirect = `http://$(dst-ip)/portal?isp=${tenant.data?.slug ?? ""}&mac=$(mac)&ip=$(ip)&url=$(link-orig)`;
+  const slug = tenant.data?.slug ?? "";
+  const portalUrl = slug ? `${window.location.origin}/portal?isp=${slug}` : "";
+  const mikrotikRedirect = slug
+    ? `http://$(dst-ip)/portal?isp=${slug}&mac=$(mac)&ip=$(ip)&url=$(link-orig)`
+    : "";
 
   function copyUrl(text: string) {
     navigator.clipboard.writeText(text);
@@ -103,6 +104,12 @@ function PortalManagerPage() {
           </Button>
         </div>
       </div>
+
+      {!slug && !tenant.isLoading && (
+        <div className="rounded-xl border border-warning/50 bg-warning/10 px-4 py-3 text-sm text-warning">
+          ⚠️ Your account has no ISP slug set. The portal URL will not work until a slug is configured in your tenant settings.
+        </div>
+      )}
 
       <Tabs defaultValue="portal-url">
         <TabsList className="grid w-full grid-cols-4">
