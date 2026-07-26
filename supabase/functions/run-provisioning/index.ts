@@ -83,9 +83,11 @@ async function stepVerifyPayment(sb: any, input: Record<string, unknown>) {
 
 async function stepCreateSubscription(sb: any, input: Record<string, unknown>) {
   const { data: pkg } = await sb
-    .from("packages").select("duration_days, name").eq("id", input["package_id"]).maybeSingle();
+    .from("packages").select("duration_days, name, type").eq("id", input["package_id"]).maybeSingle();
   const days = pkg?.duration_days ?? 30;
   const expiresAt = new Date(Date.now() + days * 86_400_000).toISOString();
+  // Stamp service type from package so activate step knows hotspot vs pppoe
+  const serviceType: string = pkg?.type === "pppoe" ? "pppoe" : "hotspot";
 
   // Derive a username from customer phone if not already set
   let username: string | null = null;
@@ -96,7 +98,7 @@ async function stepCreateSubscription(sb: any, input: Record<string, unknown>) {
 
   const { data: existing } = await sb
     .from("subscriptions")
-    .select("id, expires_at, status")
+    .select("id, expires_at, status, type")
     .eq("customer_id", input["customer_id"])
     .eq("package_id", input["package_id"])
     .eq("tenant_id", input["tenant_id"])
@@ -107,17 +109,21 @@ async function stepCreateSubscription(sb: any, input: Record<string, unknown>) {
     const newExpiry = existing.status === "active" && existing.expires_at
       ? new Date(Math.max(Date.parse(existing.expires_at), Date.now()) + days * 86_400_000).toISOString()
       : expiresAt;
-    await sb.from("subscriptions").update({ status: "active", expires_at: newExpiry, updated_at: now(), ...(username && !existing.username ? { username, password: username } : {}) }).eq("id", existing.id);
+    await sb.from("subscriptions").update({
+      status: "active", expires_at: newExpiry, updated_at: now(),
+      ...(username && !existing.username ? { username, password: username } : {}),
+      ...(!existing.type ? { type: serviceType } : {}),
+    }).eq("id", existing.id);
     subscriptionId = existing.id;
   } else {
     const { data: newSub, error } = await sb
       .from("subscriptions")
-      .insert({ tenant_id: input["tenant_id"], customer_id: input["customer_id"], package_id: input["package_id"], status: "active", expires_at: expiresAt, ...(username ? { username, password: username } : {}) })
+      .insert({ tenant_id: input["tenant_id"], customer_id: input["customer_id"], package_id: input["package_id"], status: "active", expires_at: expiresAt, type: serviceType, ...(username ? { username, password: username } : {}) })
       .select("id").single();
     if (error) throw new Error(error.message);
     subscriptionId = newSub.id;
   }
-  return { subscription_id: subscriptionId, expires_at: expiresAt, package_name: pkg?.name };
+  return { subscription_id: subscriptionId, expires_at: expiresAt, package_name: pkg?.name, service_type: serviceType };
 }
 
 async function stepGenerateInvoice(sb: any, input: Record<string, unknown>) {
@@ -165,7 +171,10 @@ async function stepActivateRouterUser(sb: any, input: Record<string, unknown>) {
     await sb.from("subscriptions").update({ router_id: routerId }).eq("id", input["subscription_id"]);
   }
 
-  const subType: string = sub.type ?? "hotspot";
+  // Derive service type from router's configured services, fall back to sub.type, then hotspot
+  const { data: routerRow } = await sb.from("routers").select("services").eq("id", routerId).maybeSingle();
+  const routerServices: string[] = routerRow?.services ?? [];
+  const subType: string = sub.type ?? (routerServices.includes("pppoe") && !routerServices.includes("hotspot") ? "pppoe" : "hotspot");
   const command = subType === "pppoe" ? "add_pppoe_user" : "add_hotspot_user";
   const params: Record<string, unknown> = { username: sub.username, password: sub.password ?? sub.username };
   if (sub.profile)   params["profile"]   = sub.profile;
