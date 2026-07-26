@@ -119,7 +119,7 @@ function AaaPage() {
     queryFn: async () => {
       let q = (supabase as any)
         .from("auth_events")
-        .select("id, username, event_type, reply_message, received_at, nas_id")
+        .select("id, username, event_type, framed_ip, nas_identifier, received_at, nas_id")
         .eq("tenant_id", tenantId!)
         .order("received_at", { ascending: false })
         .limit(100);
@@ -130,6 +130,7 @@ function AaaPage() {
       return data ?? [];
     },
     enabled: !!tenantId,
+    retry: false,
   });
 
   const runHealth = useMutation({
@@ -541,18 +542,20 @@ function AaaPage() {
                   <TableHead>Username</TableHead>
                   <TableHead>Event</TableHead>
                   <TableHead className="hidden sm:table-cell">NAS</TableHead>
-                  <TableHead className="hidden lg:table-cell">Reply</TableHead>
+                  <TableHead className="hidden lg:table-cell">Framed IP</TableHead>
                   <TableHead>Received</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {accounting.isLoading ? (
                   <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Loading...</TableCell></TableRow>
+                ) : accounting.isError ? (
+                  <TableRow><TableCell colSpan={5} className="text-center py-8 text-destructive">Failed to load accounting events. Please try again.</TableCell></TableRow>
                 ) : accounting.data?.length === 0 ? (
                   <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No auth events yet. Events are written when MikroTik runs the provisioning script.</TableCell></TableRow>
                 ) : accounting.data?.map((row: any) => (
                   <TableRow key={row.id}>
-                    <TableCell className="font-mono text-xs">{row.username}</TableCell>
+                    <TableCell className="font-mono text-xs">{row.username ?? "—"}</TableCell>
                     <TableCell>
                       <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
                         row.event_type === "auth_success" || row.event_type === "acct_start" ? "bg-green-500/15 text-green-600"
@@ -560,8 +563,8 @@ function AaaPage() {
                         : "bg-muted text-muted-foreground"
                       }`}>{row.event_type}</span>
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell text-xs">{nasDevices.data?.find((n: any) => n.id === row.nas_id)?.name ?? "—"}</TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{row.reply_message ?? "—"}</TableCell>
+                    <TableCell className="hidden sm:table-cell text-xs">{row.nas_identifier ?? nasDevices.data?.find((n: any) => n.id === row.nas_id)?.name ?? "—"}</TableCell>
+                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{row.framed_ip ?? "—"}</TableCell>
                     <TableCell className="text-xs">{new Date(row.received_at).toLocaleString()}</TableCell>
                   </TableRow>
                 ))}
