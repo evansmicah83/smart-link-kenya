@@ -349,22 +349,19 @@ function RoutersPage() {
   async function handleApply() {
     if (!pppoe && !hotspot) { toast.error("Select at least one service type"); return; }
     if (!routerId) { toast.error("Router not found"); return; }
-     
+
     setStep(4);
     setApplyDone(false);
     setLogLines([]);
-     
-    let hasErrors = false;
 
     const addLog = (message: string, level: "info" | "success" | "warn" | "error" = "info") => {
-      if (level === "error") hasErrors = true;
       const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
       const icon = level === "success" ? "✓" : level === "error" ? "✕" : level === "warn" ? "⚠" : "•";
       setLogLines((prev) => [...prev, { ts, level, icon, message }]);
     };
 
     try {
-      // Step 1: Save config to DB
+      // 1. Save config to DB
       addLog("Saving configuration...", "info");
       const provSlug = `${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`;
       const { error: updateErr } = await supabase.from("routers").update({
@@ -375,8 +372,9 @@ function RoutersPage() {
         provisioning_slug: provSlug,
       } as any).eq("id", routerId);
       if (updateErr) throw updateErr;
+      addLog("Configuration saved", "success");
 
-      // Auto-save hotspot portal URL to settings so provisioning script always has it
+      // 2. Auto-save hotspot portal URL
       if (hotspot && tenantId) {
         const { data: tenantRow } = await supabase.from("tenants").select("slug").eq("id", tenantId).maybeSingle();
         const ispSlug = (tenantRow as any)?.slug ?? tenantId;
@@ -386,73 +384,42 @@ function RoutersPage() {
           key: "hotspot_login_page",
           value: portalLoginPage,
         }, { onConflict: "tenant_id,key" });
-        addLog(`Hotspot portal URL saved: ${portalLoginPage}`, "success");
+        addLog(`Hotspot portal URL saved`, "success");
       }
 
-      await new Promise((r) => window.setTimeout(r, 400));
-      addLog("Configuration saved to SmartLinkNet", "success");
-
-      // Step 2: Fetch and validate provisioning script
-      addLog("Generating provisioning script...", "info");
-      const provisionUrl = `${window.location.origin}/provision/${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`;
+      // 3. Verify provisioning script is reachable
+      addLog("Verifying provisioning script URL...", "info");
+      const provisionUrl = `${window.location.origin}/provision/${provSlug}`;
       const scriptRes = await fetch(provisionUrl);
-      if (!scriptRes.ok) throw new Error(`Failed to fetch provisioning script: ${scriptRes.status}`);
-      await new Promise((r) => window.setTimeout(r, 300));
-      addLog("Provisioning script ready", "success");
+      if (!scriptRes.ok) throw new Error(`Provisioning script not reachable (HTTP ${scriptRes.status}) — check slug`);
+      addLog("Provisioning script URL is reachable", "success");
 
-      // Step 3: Check router connectivity
-      addLog("Checking device connectivity...", "info");
-      const { data: routerData } = await supabase.from("routers").select("status,ip_address").eq("id", routerId).single();
-      if (routerData?.status !== "online") {
-        addLog("⚠ Device not reporting online yet (may still be importing script)", "warn");
-      } else {
-        addLog(`Device online at ${routerData.ip_address}`, "success");
+      // 4. Live ping the router via router-command
+      addLog("Pinging router via API...", "info");
+      const { data: pingData, error: pingErr } = await supabase.functions.invoke("router-command", {
+        body: { routerId, command: "get_status" },
+      });
+      if (pingErr || !pingData?.success) {
+        // Mark offline in DB so UI reflects reality
+        await supabase.from("routers").update({ status: "offline" }).eq("id", routerId);
+        addLog(`Router is unreachable: ${pingData?.error ?? pingErr?.message ?? "no response"}`, "error");
+        addLog("Paste the provisioning script on the router first, then reprovision", "warn");
+        setApplyDone(true);
+        return;
       }
-      await new Promise((r) => window.setTimeout(r, 300));
+      const status = pingData.data as any;
+      addLog(`Router online — ${status.identity ?? identity} | CPU ${status.cpuLoad}% | Uptime ${status.uptime}`, "success");
 
-      // Step 4: Configure services
-      addLog(`Configuring services: ${selectedServices.map((s) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ")}`, "info");
-      await new Promise((r) => window.setTimeout(r, 500));
-      addLog("Service configuration queued", "success");
-
-      // Step 5: Configure bridge
-      addLog(`Bridging interface ${bridgePort} to ${provisioningTemplate.bridgeName}`, "info");
-      await new Promise((r) => window.setTimeout(r, 400));
-      addLog("Bridge configuration queued", "success");
-
-      // Step 6: Configure network
-      addLog(`Setting up subnet ${customSubnet ? subnetValue : "172.31.0.0/16"}...`, "info");
-      await new Promise((r) => window.setTimeout(r, 300));
-      addLog("Network configuration queued", "success");
-
-      // Step 7: Poll for router coming online
-      addLog("Waiting for device to apply configuration...", "info");
-      let retries = 0;
-      const maxRetries = 20; // ~60 seconds
-      while (retries < maxRetries) {
-        const { data: r } = await supabase.from("routers").select("status").eq("id", routerId).single();
-        if (r?.status === "online") {
-          addLog("✓ Device is online and configured", "success");
-          break;
-        }
-        retries++;
-        if (retries % 3 === 0) addLog(`Waiting for device (${retries}s elapsed)...`, "info");
-        await new Promise((r) => window.setTimeout(r, 3000));
-      }
-
-      if (retries >= maxRetries) {
-        addLog("Device did not report online within timeout (script may still be running on device)", "warn");
-      }
-
-      // Step 8: Final confirmation
-      addLog("Configuration deployment complete", "success");
-      await new Promise((r) => window.setTimeout(r, 300));
-      addLog("Ready to provision subscribers on this device", "success");
+      // 5. Confirm services
+      addLog(`Services configured: ${selectedServices.map((s) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ")}`, "success");
+      addLog(`Bridge port: ${bridgePort} → ${provisioningTemplate.bridgeName}`, "success");
+      addLog(`Subnet: ${customSubnet ? subnetValue : "172.31.0.0/16"}`, "success");
+      addLog("Configuration complete — ready to provision subscribers", "success");
 
       setApplyDone(true);
     } catch (err: any) {
       addLog(`Error: ${err.message || "Configuration failed"}`, "error");
-      addLog("You can retry the configuration or return to routers list", "info");
+      addLog("Fix the issue above and reprovision", "warn");
       setApplyDone(true);
     }
   }
@@ -495,12 +462,18 @@ function RoutersPage() {
   async function handleSyncRouter(routerId: string) {
     setSyncing((prev) => new Set([...prev, routerId]));
     try {
-      // Trigger a DB refresh to get latest status
-      await new Promise((r) => window.setTimeout(r, 1000));
+      const { data, error } = await supabase.functions.invoke("router-command", {
+        body: { routerId, command: "get_status" },
+      });
+      if (error || !data?.success) {
+        await supabase.from("routers").update({ status: "offline" }).eq("id", routerId);
+        toast.error("Router unreachable — marked offline");
+      } else {
+        toast.success("Router is online");
+      }
       queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
-      toast.success("Router synced");
     } catch (err: any) {
-      toast.error("Failed to sync router");
+      toast.error("Sync failed");
     } finally {
       setSyncing((prev) => {
         const newSet = new Set(prev);
