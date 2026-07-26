@@ -1021,20 +1021,6 @@ function RoutersPage() {
                             </span>
                           </div>
                         ))}
-                          <div key={check.label} className={`flex items-center justify-between px-4 py-3 ${
-                            i < arr.length - 1 ? "border-b border-border" : ""
-                          }`}>
-                            <span className="text-sm text-foreground">{check.label}</span>
-                            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
-                              check.ok
-                                ? "bg-success/10 text-success"
-                                : i === 1 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                                : "bg-destructive/10 text-destructive"
-                            }`}>
-                              {check.ok ? `✓ ${check.okText}` : `⚠ ${check.failText}`}
-                            </span>
-                          </div>
-                        ))}
                       </div>
 
                       {/* Recommendations */}
