@@ -366,14 +366,29 @@ function RoutersPage() {
     try {
       // Step 1: Save config to DB
       addLog("Saving configuration...", "info");
+      const provSlug = `${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`;
       const { error: updateErr } = await supabase.from("routers").update({
         services: selectedServices,
         bridge_port: bridgePort,
         subnet: customSubnet ? subnetValue : "172.31.0.0/16",
         provisioning_identity: identity.trim(),
-        provisioning_slug: `${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`,
+        provisioning_slug: provSlug,
       } as any).eq("id", routerId);
       if (updateErr) throw updateErr;
+
+      // Auto-save hotspot portal URL to settings so provisioning script always has it
+      if (hotspot && tenantId) {
+        const { data: tenantRow } = await supabase.from("tenants").select("slug").eq("id", tenantId).maybeSingle();
+        const ispSlug = (tenantRow as any)?.slug ?? tenantId;
+        const portalLoginPage = `https://smart-link-kenya.vercel.app/portal?isp=${ispSlug}&mac=$(mac)&ip=$(ip)&url=$(link-orig)&dst=$(dst-ip)`;
+        await (supabase as any).from("settings").upsert({
+          tenant_id: tenantId,
+          key: "hotspot_login_page",
+          value: portalLoginPage,
+        }, { onConflict: "tenant_id,key" });
+        addLog(`Hotspot portal URL saved: ${portalLoginPage}`, "success");
+      }
+
       await new Promise((r) => window.setTimeout(r, 400));
       addLog("Configuration saved to SmartLinkNet", "success");
 
@@ -990,7 +1005,22 @@ function RoutersPage() {
                           { label: "VPN Integration", ok: !!viewingRouter.ip_address, okText: "Connected", failText: "Pending" },
                           { label: "Services Configured", ok: !!viewingRouter.services?.length, okText: `${viewingRouter.services?.length} active`, failText: "None" },
                           { label: "Bridge Configured", ok: !!viewingRouter.bridge_port, okText: viewingRouter.bridge_port, failText: "Not set" },
+                          { label: "Hotspot Portal", ok: viewingRouter.services?.includes("hotspot") && !!viewingRouter.provisioning_slug, okText: "Login page auto-configured", failText: viewingRouter.services?.includes("hotspot") ? "Re-provision to fix" : "N/A (no hotspot)" },
                         ]).map((check, i, arr) => (
+                          <div key={check.label} className={`flex items-center justify-between px-4 py-3 ${
+                            i < arr.length - 1 ? "border-b border-border" : ""
+                          }`}>
+                            <span className="text-sm text-foreground">{check.label}</span>
+                            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+                              check.ok
+                                ? "bg-success/10 text-success"
+                                : i === 1 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                : "bg-destructive/10 text-destructive"
+                            }`}>
+                              {check.ok ? `✓ ${check.okText}` : `⚠ ${check.failText}`}
+                            </span>
+                          </div>
+                        ))}
                           <div key={check.label} className={`flex items-center justify-between px-4 py-3 ${
                             i < arr.length - 1 ? "border-b border-border" : ""
                           }`}>
