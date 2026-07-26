@@ -1,4 +1,4 @@
-const CACHE = "smartlinknet-v__DEPLOY_TS__";
+const CACHE = "smartlinknet-v20260726";
 const OFFLINE_URL = "/dashboard";
 
 const PRECACHE = [
@@ -31,6 +31,11 @@ self.addEventListener("activate", (e) => {
       Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
+});
+
+// Force all open tabs to reload when a new SW takes over
+self.addEventListener("message", (e) => {
+  if (e.data === "skipWaiting") self.skipWaiting();
 });
 
 self.addEventListener("fetch", (e) => {
