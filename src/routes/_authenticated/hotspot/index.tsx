@@ -74,7 +74,7 @@ function HotspotPage() {
   const routers = useQuery({
     queryKey: ["routers-list", tid],
     queryFn: async () => {
-      const { data } = await supabase.from("routers").select("id,name").eq("tenant_id", tid!).eq("is_active", true);
+      const { data } = await supabase.from("routers").select("id,name").eq("tenant_id", tid!).eq("status", "online");
       return data ?? [];
     },
     enabled: !!tid,
@@ -103,6 +103,9 @@ function HotspotPage() {
     mutationFn: async ({ dbId, routerId, sessionId }: { dbId: string; routerId?: string; sessionId: string }) => {
       if (routerId) { try { await kickSession(routerId, sessionId); } catch {} }
       await supabase.from("sessions").update({ ended_at: new Date().toISOString(), terminated_by: "admin" } as any).eq("id", dbId);
+      // Also try to kick by nas_session_id if available (real MikroTik session ID)
+      const { data: sess } = await supabase.from("sessions").select("nas_session_id").eq("id", dbId).maybeSingle() as any;
+      if (routerId && sess?.nas_session_id) { try { await kickSession(routerId, sess.nas_session_id); } catch {} }
     },
     onSuccess: () => { toast.success("Session disconnected"); qc.invalidateQueries({ queryKey: ["sessions"] }); },
     onError: (e: any) => toast.error(e.message),
