@@ -218,6 +218,28 @@ function RoutersPage() {
     refetchInterval: 30000,
   });
 
+  // Auto-sync all routers every 60s in the background
+  useEffect(() => {
+    if (!tenantId) return;
+    const interval = setInterval(async () => {
+      const rows = routersQuery.data;
+      if (!rows?.length) return;
+      await Promise.all(
+        rows.map(async (r) => {
+          const { data } = await supabase.functions.invoke("router-command", {
+            body: { routerId: r.id, command: "get_status" },
+          });
+          const newStatus = data?.success ? "online" : "offline";
+          if (newStatus !== r.status) {
+            await supabase.from("routers").update({ status: newStatus }).eq("id", r.id);
+          }
+        })
+      );
+      queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [tenantId, routersQuery.data]);
+
   const routers = routersQuery.data ?? [];
   const { online, offline } = useMemo(() => ({
     online: routers.filter((r) => r.status === "online").length,
@@ -484,7 +506,6 @@ function RoutersPage() {
   }
 
   function handleReprovisionRouter(router: any) {
-    // Load router data into wizard
     setRouterId(router.id);
     setIdentity(router.provisioning_identity || router.name || "");
     setPppoe(router.services?.includes("pppoe") ?? false);
@@ -492,11 +513,19 @@ function RoutersPage() {
     setBridgePort((router.bridge_port || "ether2") as "ether1" | "ether2");
     setCustomSubnet(router.subnet && router.subnet !== "172.31.0.0/16");
     setSubnetValue(router.subnet || "172.31.0.0/16");
-     
-    // Enter wizard at step 2
-    setStep(2);
-    setView("wizard");
     setReprovisioning(null);
+
+    if (router.status === "online") {
+      // Router already online — skip the wait screen, go straight to services
+      setRouterOnline(true);
+      setVpnAddress(router.ip_address ?? null);
+      setStep(3);
+    } else {
+      // Router offline — show provisioning script and wait for it to come online
+      setRouterOnline(false);
+      setStep(2);
+    }
+    setView("wizard");
     toast.success("Loaded router for reprovisioning");
   }
 
