@@ -118,7 +118,7 @@ async function handleMikrotikRest(
 
   const mt = createMikrotikClient(
     host,
-    router.api_port ?? 80,
+    router.api_port ?? 8728,
     router.api_username ?? "",
     router.api_password ?? "",
     router.use_ssl ?? false
@@ -248,27 +248,6 @@ async function handleMikrotikRest(
       return mt.post("/ping", { address: target, count: "3" });
     }
 
-    case "run_script": {
-      const url = params.url as string;
-      const filename = params.filename as string;
-      if (!url || !filename) throw new Error("url and filename required");
-
-      // Step 1: fetch the script file onto the router
-      await mt.post("/tool/fetch", {
-        url,
-        "dst-path": filename,
-        "mode": "https",
-      });
-
-      // Step 2: wait 2s for file to land
-      await new Promise((r) => setTimeout(r, 2000));
-
-      // Step 3: import/execute the script
-      await mt.post("/import", { "file-name": filename });
-
-      return { executed: true, filename };
-    }
-
     default:
       throw new Error(`Unknown command: ${command}`);
   }
@@ -305,7 +284,15 @@ serve(async (req) => {
       .single();
 
     if (routerErr || !router) throw new Error("Router not found");
-    if (!router.api_username) throw new Error("Router API credentials not configured");
+
+    // Gracefully handle missing credentials/address — router may be provisioned but behind NAT
+    const host = router.connection_string || router.ip_address;
+    if (!router.api_username || !host) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Router credentials or address not configured", offline: true, durationMs: Date.now() - start }),
+        { status: 200, headers: { ...CORS, "Content-Type": "application/json" } }
+      );
+    }
 
     const adapterType = resolveAdapter(router as RouterRow);
     let result: unknown;
@@ -353,9 +340,14 @@ serve(async (req) => {
   } catch (err: unknown) {
     const message = (err as Error).message ?? "Unknown error";
 
-    // Mark router offline on connection errors
-    const isConnErr = message.includes("MikroTik REST") || message.includes("fetch") || message.includes("timeout");
-    if (isConnErr && routerId) {
+    // Only mark router offline on actual connection errors, not credential/config errors
+    const isConnErr = routerId && (
+      message.includes("MikroTik REST") ||
+      message.includes("Failed to fetch") ||
+      message.includes("connection refused") ||
+      message.includes("timeout")
+    );
+    if (isConnErr) {
       const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       await sb.from("routers").update({ status: "offline" }).eq("id", routerId).catch(() => {});
       await sb.from("network_adapters")
@@ -366,7 +358,7 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({ success: false, error: message, durationMs: Date.now() - start }),
-      { status: 400, headers: { ...CORS, "Content-Type": "application/json" } }
+      { status: 200, headers: { ...CORS, "Content-Type": "application/json" } }
     );
   }
 });

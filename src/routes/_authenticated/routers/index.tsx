@@ -235,9 +235,11 @@ function RoutersPage() {
           const { data } = await supabase.functions.invoke("router-command", {
             body: { routerId: r.id, command: "get_status" },
           });
-          const newStatus = data?.success ? "online" : "offline";
-          if (newStatus !== r.status) {
-            await supabase.from("routers").update({ status: newStatus }).eq("id", r.id);
+          // Only mark offline on real connection failures, not missing credentials
+          if (data?.success && r.status !== "online") {
+            await supabase.from("routers").update({ status: "online" }).eq("id", r.id);
+          } else if (!data?.success && !data?.offline && r.status !== "offline") {
+            await supabase.from("routers").update({ status: "offline" }).eq("id", r.id);
           }
         })
       );
@@ -407,51 +409,48 @@ function RoutersPage() {
 
       // 2. Auto-save hotspot portal URL
       if (hotspot && tenantId) {
+        addLog("Saving hotspot portal URL...", "info");
         const { data: tenantRow } = await supabase.from("tenants").select("slug").eq("id", tenantId).maybeSingle();
         const ispSlug = (tenantRow as any)?.slug ?? tenantId;
-        const portalLoginPage = `https://smart-link-kenya.vercel.app/portal?isp=${ispSlug}&mac=$(mac)&ip=$(ip)&url=$(link-orig)&dst=$(dst-ip)`;
-        await (supabase as any).from("settings").upsert({
+        const portalLoginPage = `${window.location.origin}/portal?isp=${ispSlug}&mac=$(mac)&ip=$(ip)&url=$(link-orig)&dst=$(dst-ip)`;
+        const { error: settingsErr } = await (supabase as any).from("settings").upsert({
           tenant_id: tenantId,
           key: "hotspot_login_page",
           value: portalLoginPage,
         }, { onConflict: "tenant_id,key" });
-        addLog(`Hotspot portal URL saved`, "success");
+        if (settingsErr) addLog(`Hotspot portal URL warning: ${settingsErr.message}`, "warn");
+        else addLog("Hotspot portal URL saved", "success");
       }
 
       // 3. Verify provisioning script is reachable
       addLog("Verifying provisioning script URL...", "info");
       const provisionUrl = `${window.location.origin}/provision/${provSlug}`;
-      const scriptRes = await fetch(provisionUrl);
-      if (!scriptRes.ok) throw new Error(`Provisioning script not reachable (HTTP ${scriptRes.status}) — check slug`);
-      addLog("Provisioning script URL is reachable", "success");
+      try {
+        const scriptRes = await fetch(provisionUrl);
+        if (!scriptRes.ok) throw new Error(`HTTP ${scriptRes.status}`);
+        const scriptText = await scriptRes.text();
+        if (!scriptText.includes("SmartLinkNet")) throw new Error("Script content invalid");
+        addLog("Provisioning script URL is reachable", "success");
+      } catch (e: any) {
+        throw new Error(`Provisioning script not reachable: ${e.message} — check slug`);
+      }
 
-      // 4. Execute provisioning script on the router
+      // 4. Try live ping — succeeds if router has a public IP set, warns otherwise
       addLog("Connecting to router API...", "info");
       const { data: pingData, error: pingErr } = await supabase.functions.invoke("router-command", {
         body: { routerId, command: "get_status" },
       });
-      if (pingErr || !pingData?.success) {
-        addLog(`Cannot reach router: ${pingData?.error ?? pingErr?.message ?? "no response"}`, "warn");
-        addLog("Credentials not set or router unreachable — paste the provisioning script manually in Winbox Terminal", "warn");
+      if (pingErr) {
+        addLog(`Router API unreachable: ${pingErr.message}`, "warn");
+      } else if (pingData?.success) {
+        const s = pingData.data as any;
+        addLog(`Router confirmed online — ${s.identity ?? identity} | CPU ${s.cpuLoad}% | Uptime ${s.uptime}`, "success");
+        // Update router status to online in DB
+        await supabase.from("routers").update({ status: "online", last_seen: new Date().toISOString() }).eq("id", routerId);
+      } else if (pingData?.offline) {
+        addLog("Router has no public IP — status will update automatically via heartbeat after provisioning script runs", "warn");
       } else {
-        const status = pingData.data as any;
-        addLog(`Connected — ${status.identity ?? identity} | RouterOS ${status.firmwareVersion ?? ""} | CPU ${status.cpuLoad}%`, "success");
-
-        addLog("Pushing provisioning script to router...", "info");
-        const provisionUrl = `${window.location.origin}/provision/${provSlug}`;
-        const filename = `${provSlug}.rsc`;
-        const { data: scriptData, error: scriptErr } = await supabase.functions.invoke("router-command", {
-          body: { routerId, command: "run_script", params: { url: provisionUrl, filename } },
-        });
-        if (scriptErr || !scriptData?.success) {
-          addLog(`Script push failed: ${scriptData?.error ?? scriptErr?.message ?? "unknown error"}`, "warn");
-          addLog("Paste the provisioning script manually in Winbox Terminal as fallback", "warn");
-        } else {
-          addLog("Provisioning script executed on router ✓", "success");
-          addLog("Bridge, DHCP, NAT, RADIUS and services configured", "success");
-          // Mark online since we just successfully communicated
-          await supabase.from("routers").update({ status: "online" }).eq("id", routerId);
-        }
+        addLog(`Router unreachable: ${pingData?.error ?? "connection failed"} — ensure public IP is set in Edit`, "warn");
       }
 
       // 5. Confirm services
@@ -459,6 +458,9 @@ function RoutersPage() {
       addLog(`Bridge port: ${bridgePort} → ${provisioningTemplate.bridgeName}`, "success");
       addLog(`Subnet: ${customSubnet ? subnetValue : "172.31.0.0/16"}`, "success");
       addLog("Configuration complete — ready to provision subscribers", "success");
+
+      // 6. Refresh router list so landing page shows updated services
+      queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
 
       setApplyDone(true);
     } catch (err: any) {
@@ -481,7 +483,7 @@ function RoutersPage() {
         ...(editIp && { connection_string: editIp.trim() }),
         ...(editApiUsername && { api_username: editApiUsername.trim() }),
         ...(editApiPassword && { api_password: editApiPassword.trim() }),
-        api_port: 80,
+        api_port: 8728,
       } as any).eq("id", editingRouter.id);
 
       if (error) throw error;
@@ -514,8 +516,11 @@ function RoutersPage() {
         body: { routerId, command: "get_status" },
       });
       if (error || !data?.success) {
-        await supabase.from("routers").update({ status: "offline" }).eq("id", routerId);
-        toast.error("Router unreachable — marked offline");
+        // Only mark offline if it's a real connection failure, not a credentials/config issue
+        if (!data?.offline) {
+          await supabase.from("routers").update({ status: "offline" }).eq("id", routerId);
+        }
+        toast.error(data?.offline ? "Router has no public IP configured — set IP in Edit" : "Router unreachable — marked offline");
       } else {
         toast.success("Router is online");
       }
@@ -1539,7 +1544,7 @@ function RoutersPage() {
                     ...(routerIp && { connection_string: routerIp }),
                     ...(apiUsername && { api_username: apiUsername }),
                     ...(apiPassword && { api_password: apiPassword }),
-                    api_port: 80,
+                    api_port: 8728,
                   } as any).select("id").single();
                   if (error) { toast.error(error.message); return; }
                   setRouterId(data.id); setRouterOnline(false); setLogLines([]); setApplyDone(false); setStep(2);
