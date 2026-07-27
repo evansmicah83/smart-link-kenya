@@ -100,18 +100,21 @@ function AaaPage() {
     queryKey: ["aaa-servers", tenantId],
     queryFn: async () => radiusServerPool.list(tenantId!),
     enabled: !!tenantId,
+    refetchInterval: 30000,
   });
 
   const nasDevices = useQuery({
     queryKey: ["aaa-nas", tenantId],
     queryFn: async () => nasManagement.list(tenantId!),
     enabled: !!tenantId,
+    refetchInterval: 30000,
   });
 
   const clients = useQuery({
     queryKey: ["aaa-clients", tenantId],
     queryFn: async () => radiusClientService.list(tenantId!),
     enabled: !!tenantId,
+    refetchInterval: 30000,
   });
 
   const accounting = useQuery({
