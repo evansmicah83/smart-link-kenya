@@ -1477,12 +1477,15 @@ function RoutersPage() {
                 onClick={async () => {
                   if (!identity.trim()) { toast.error("Enter a router identity"); return; }
                   if (!tenantId) { toast.error("No workspace found"); return; }
+                  const provSlug = `${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`;
                   const { data, error } = await supabase.from("routers").insert({
                     tenant_id: tenantId,
                     name: identity.trim(),
                     vendor: "mikrotik",
                     status: "offline",
                     api_port: 8728,
+                    provisioning_slug: provSlug,
+                    provisioning_identity: identity.trim(),
                   } as any).select("id").single();
                   if (error) { toast.error(error.message); return; }
                   setRouterId(data.id); setRouterOnline(false); setLogLines([]); setApplyDone(false); setStep(2);
