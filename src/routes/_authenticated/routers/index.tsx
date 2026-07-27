@@ -187,6 +187,9 @@ function RoutersPage() {
   const [editingRouter, setEditingRouter] = useState<any | null>(null);
   const [editName, setEditName] = useState("");
   const [editModel, setEditModel] = useState("");
+  const [editIp, setEditIp] = useState("");
+  const [editApiUsername, setEditApiUsername] = useState("");
+  const [editApiPassword, setEditApiPassword] = useState("");
   const [deletingRouter, setDeletingRouter] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<Set<string>>(new Set());
   const [apiPortDisabled, setApiPortDisabled] = useState(false);
@@ -462,7 +465,11 @@ function RoutersPage() {
       const { error } = await supabase.from("routers").update({
         name: editName.trim(),
         model: editModel.trim() || null,
-      }).eq("id", editingRouter.id);
+        ...(editIp && { connection_string: editIp.trim() }),
+        ...(editApiUsername && { api_username: editApiUsername.trim() }),
+        ...(editApiPassword && { api_password: editApiPassword.trim() }),
+        api_port: 80,
+      } as any).eq("id", editingRouter.id);
 
       if (error) throw error;
 
@@ -712,6 +719,9 @@ function RoutersPage() {
                           setEditingRouter(r);
                           setEditName(r.name || "");
                           setEditModel(r.model || "");
+                          setEditIp(r.connection_string || "");
+                          setEditApiUsername(r.api_username || "");
+                          setEditApiPassword("");
                         }}
                         className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors"
                         title="Edit router"
@@ -781,6 +791,43 @@ function RoutersPage() {
                       className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
                       placeholder="e.g., hAP ac2"
                     />
+                  </div>
+                  <div className="border-t border-border pt-4">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">API Credentials</p>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-semibold mb-2">Router IP / Hostname</label>
+                        <input
+                          type="text"
+                          value={editIp}
+                          onChange={(e) => setEditIp(e.target.value)}
+                          className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                          placeholder="e.g., 192.168.88.1"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-sm font-semibold mb-2">Username</label>
+                          <input
+                            type="text"
+                            value={editApiUsername}
+                            onChange={(e) => setEditApiUsername(e.target.value)}
+                            className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                            placeholder="admin"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-semibold mb-2">Password</label>
+                          <input
+                            type="password"
+                            value={editApiPassword}
+                            onChange={(e) => setEditApiPassword(e.target.value)}
+                            className="w-full rounded-lg border border-border bg-background px-4 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                            placeholder="leave blank to keep current"
+                          />
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
