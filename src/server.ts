@@ -288,6 +288,17 @@ async function buildProvisionScript(slug: string, origin: string) { // origin pa
   s += "/ip service enable www\r\n";
   s += "/ip service enable ssh\r\n";
   s += "\r\n";
+  s += "# --- NAT Masquerade (internet sharing) ---\r\n";
+  s += ifLen("/ip firewall nat find chain=srcnat action=masquerade", "/ip firewall nat add chain=srcnat action=masquerade comment=\"" + template.tenantSlug + " auto\"") + "\r\n";
+  s += "\r\n";
+  s += "# --- Auto-update scheduler (daily re-provision) ---\r\n";
+  const scriptUrl = origin + "/provision/" + safeSlug;
+  const scriptFile = template.tenantSlug + ".rsc";
+  const schedulerCmd = "/tool fetch mode=https url=\\\"" + scriptUrl + "\\\" dst-path=" + scriptFile + ";:delay 3s;/import " + scriptFile;
+  s += ifLen("/system scheduler find name=\"" + template.tenantSlug + "-sync\"",
+    "/system scheduler add name=\"" + template.tenantSlug + "-sync\" interval=1d start-time=00:00:00 on-event=\"" + schedulerCmd + "\" comment=\"SmartLinkNet daily sync\""
+  ) + "\r\n";
+  s += "\r\n";
   s += "# --- Registration & Health Check ---\r\n";
   s += ":local notifyUrl \"" + notifyUrl + "\"\r\n";
   s += "/tool fetch mode=https url=$notifyUrl keep-result=no\r\n";

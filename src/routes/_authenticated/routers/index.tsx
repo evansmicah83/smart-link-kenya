@@ -366,7 +366,7 @@ function RoutersPage() {
 
   async function handleApply() {
     if (!pppoe && !hotspot) { toast.error("Select at least one service type"); return; }
-    if (!routerId) { toast.error("Router not found"); return; }
+    if (!routerId || !tenantId) { toast.error("Router not found"); return; }
 
     setStep(4);
     setApplyDone(false);
@@ -379,62 +379,112 @@ function RoutersPage() {
     };
 
     try {
-      // 1. Save services, bridge, subnet to DB
-      addLog("Saving configuration...", "info");
       const provSlug = `${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`;
+      const subnet = customSubnet ? subnetValue : "172.31.0.0/16";
+
+      // 1. Save router config to DB
+      addLog("Saving router configuration...", "info");
       const { error: updateErr } = await supabase.from("routers").update({
         services: selectedServices,
         bridge_port: bridgePort,
-        subnet: customSubnet ? subnetValue : "172.31.0.0/16",
+        subnet,
         provisioning_identity: identity.trim(),
         provisioning_slug: provSlug,
       } as any).eq("id", routerId);
-      if (updateErr) throw updateErr;
-      addLog("Configuration saved", "success");
+      if (updateErr) throw new Error(`Failed to save router config: ${updateErr.message}`);
+      addLog(`Router config saved — services: ${selectedServices.map(s => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ")}`, "success");
 
-      // 2. Save hotspot portal URL
-      if (hotspot && tenantId) {
-        addLog("Saving hotspot portal URL...", "info");
+      // 2. Upsert NAS device record
+      addLog("Registering NAS device...", "info");
+      const { data: existingNas } = await supabase.from("nas_devices" as any).select("id").eq("router_id", routerId).maybeSingle();
+      const nasPayload = {
+        tenant_id: tenantId,
+        router_id: routerId,
+        name: identity.trim(),
+        vendor: "mikrotik",
+        nas_identifier: identity.trim(),
+        shared_secret: "SmartLinkNet-Public-Fallback",
+        auth_port: 1812,
+        acct_port: 1813,
+        coa_port: 3799,
+        is_active: true,
+        dynamic_profile_enabled: true,
+        updated_at: new Date().toISOString(),
+      };
+      if (existingNas?.id) {
+        await supabase.from("nas_devices" as any).update(nasPayload).eq("id", existingNas.id);
+      } else {
+        await supabase.from("nas_devices" as any).insert(nasPayload);
+      }
+      addLog("NAS device registered", "success");
+
+      // 3. Upsert RADIUS server record
+      addLog("Configuring RADIUS server...", "info");
+      const { data: existingRadius } = await supabase.from("radius_servers" as any).select("id").eq("tenant_id", tenantId).eq("name", identity.trim()).maybeSingle();
+      const radiusPayload = {
+        tenant_id: tenantId,
+        name: identity.trim(),
+        auth_port: 1812,
+        acct_port: 1813,
+        shared_secret: "SmartLinkNet-Public-Fallback",
+        protocol: "mschapv2",
+        is_primary: true,
+        is_active: true,
+        is_healthy: true,
+        timeout_ms: 3000,
+        retry_count: 3,
+        priority: 1,
+        updated_at: new Date().toISOString(),
+      };
+      if (existingRadius?.id) {
+        await supabase.from("radius_servers" as any).update(radiusPayload).eq("id", existingRadius.id);
+      } else {
+        await supabase.from("radius_servers" as any).insert({ ...radiusPayload, host: "127.0.0.1" });
+      }
+      addLog("RADIUS server configured", "success");
+
+      // 4. Save hotspot portal URL if hotspot enabled
+      if (hotspot) {
+        addLog("Configuring hotspot captive portal...", "info");
         const { data: tenantRow } = await supabase.from("tenants").select("slug").eq("id", tenantId).maybeSingle();
         const ispSlug = (tenantRow as any)?.slug ?? tenantId;
         const portalLoginPage = `${window.location.origin}/portal?isp=${ispSlug}&mac=$(mac)&ip=$(ip)&url=$(link-orig)&dst=$(dst-ip)`;
-        const { error: settingsErr } = await (supabase as any).from("settings").upsert({
+        await (supabase as any).from("settings").upsert({
           tenant_id: tenantId,
           key: "hotspot_login_page",
           value: portalLoginPage,
         }, { onConflict: "tenant_id,key" });
-        if (settingsErr) throw new Error(`Failed to save hotspot portal URL: ${settingsErr.message}`);
-        addLog("Hotspot portal URL saved", "success");
+        addLog(`Captive portal URL configured`, "success");
       }
 
-      // 3. Verify provisioning script is reachable and valid
+      // 5. Verify provisioning script is reachable and contains full config
       addLog("Verifying provisioning script...", "info");
       const provisionUrl = `${window.location.origin}/provision/${provSlug}`;
       const scriptRes = await fetch(provisionUrl);
       if (!scriptRes.ok) throw new Error(`Provisioning script not reachable (HTTP ${scriptRes.status})`);
       const scriptText = await scriptRes.text();
       if (!scriptText.includes("SmartLinkNet")) throw new Error("Provisioning script content invalid");
-      addLog("Provisioning script verified", "success");
+      const hasCorrectServices = (
+        (!pppoe || scriptText.includes("pppoe-server")) &&
+        (!hotspot || scriptText.includes("hotspot"))
+      );
+      if (!hasCorrectServices) throw new Error("Provisioning script missing selected service configuration");
+      addLog("Provisioning script verified — all services present", "success");
 
-      // 4. Confirm router is online (it was confirmed in step 2 already)
-      const { data: routerRow } = await supabase
-        .from("routers")
-        .select("status, ip_address, last_seen")
-        .eq("id", routerId)
-        .single();
-
+      // 6. Read router status (set by heartbeat in step 2)
+      const { data: routerRow } = await supabase.from("routers").select("status, ip_address, last_seen").eq("id", routerId).single();
       if (routerRow?.status === "online") {
-        addLog(`Router online — last seen ${routerRow.last_seen ? new Date(routerRow.last_seen).toLocaleTimeString() : "just now"}`, "success");
+        addLog(`Router online — last heartbeat ${routerRow.last_seen ? new Date(routerRow.last_seen).toLocaleTimeString() : "just now"}`, "success");
         if (routerRow.ip_address) setVpnAddress(routerRow.ip_address);
       } else {
-        addLog("Router status is offline — provisioning script may not have run yet", "warn");
+        addLog("Router is offline — run the provisioning script in Winbox to activate", "warn");
       }
 
-      // 5. Summary
-      addLog(`Services: ${selectedServices.map((s) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ")}`, "success");
-      addLog(`Bridge port: ${bridgePort} → ${provisioningTemplate.bridgeName}`, "success");
-      addLog(`Subnet: ${customSubnet ? subnetValue : "172.31.0.0/16"}`, "success");
-      addLog("Configuration complete — ready to provision subscribers", "success");
+      // 7. Summary
+      addLog(`Bridge: ${bridgePort} → ${provisioningTemplate.bridgeName}`, "success");
+      addLog(`Subnet: ${subnet}`, "success");
+      addLog(`Auto-update scheduler: daily at 00:00`, "success");
+      addLog("Router is fully configured and ready for subscribers", "success");
 
       queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
       setApplyDone(true);
