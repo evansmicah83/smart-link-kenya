@@ -224,30 +224,14 @@ function RoutersPage() {
     refetchInterval: 30000,
   });
 
-  // Auto-sync: only attempt live check for routers with a public IP
+  // Auto-refresh router list every 60s — status is set by heartbeat (server.ts /provision/notify)
   useEffect(() => {
     if (!tenantId) return;
-    const interval = setInterval(async () => {
-      const rows = routersQuery.data;
-      if (!rows?.length) return;
-      const publicIpRouters = rows.filter((r) => r.connection_string || r.ip_address);
-      if (!publicIpRouters.length) return;
-      await Promise.all(
-        publicIpRouters.map(async (r) => {
-          const { data } = await supabase.functions.invoke("router-command", {
-            body: { routerId: r.id, command: "get_status" },
-          });
-          if (data?.success && r.status !== "online") {
-            await supabase.from("routers").update({ status: "online" }).eq("id", r.id);
-          } else if (!data?.success && r.status !== "offline") {
-            await supabase.from("routers").update({ status: "offline" }).eq("id", r.id);
-          }
-        })
-      );
+    const interval = setInterval(() => {
       queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
     }, 60000);
     return () => clearInterval(interval);
-  }, [tenantId, routersQuery.data]);
+  }, [tenantId]);
 
   const routers = routersQuery.data ?? [];
   const { online, offline } = useMemo(() => ({
@@ -504,39 +488,24 @@ function RoutersPage() {
     try {
       const { data: row, error } = await supabase
         .from("routers")
-        .select("status, last_seen, connection_string, ip_address")
+        .select("status, last_seen")
         .eq("id", id)
         .single();
 
       if (error) throw error;
 
-      const hasPublicIp = !!(row?.connection_string || row?.ip_address);
-
-      if (hasPublicIp) {
-        // Router has a reachable address — try live ping via edge function
-        const { data } = await supabase.functions.invoke("router-command", {
-          body: { routerId: id, command: "get_status" },
-        });
-        if (data?.success) {
-          toast.success("Router is online");
-        } else {
-          await supabase.from("routers").update({ status: "offline" }).eq("id", id);
-          toast.error("Router unreachable — marked offline");
-        }
+      // Status is authoritative from the heartbeat (/provision/notify/<slug>)
+      if (row?.status === "online") {
+        const lastSeen = row.last_seen
+          ? new Date(row.last_seen).toLocaleTimeString()
+          : "unknown";
+        toast.success(`Online — last heartbeat ${lastSeen}`);
       } else {
-        // NAT'd router — status is set by heartbeat, just reflect DB truth
-        if (row?.status === "online") {
-          const lastSeen = row.last_seen
-            ? new Date(row.last_seen).toLocaleTimeString()
-            : "unknown";
-          toast.success(`Router is online — last heartbeat ${lastSeen}`);
-        } else {
-          toast.info("Router is offline — waiting for provisioning script to run");
-        }
+        toast.info("Offline — router has not checked in yet");
       }
 
       queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
-    } catch (err: any) {
+    } catch {
       toast.error("Sync failed");
     } finally {
       setSyncing((prev) => {
