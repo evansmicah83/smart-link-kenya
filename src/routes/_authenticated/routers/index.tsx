@@ -403,6 +403,7 @@ function RoutersPage() {
         subnet: customSubnet ? subnetValue : "172.31.0.0/16",
         provisioning_identity: identity.trim(),
         provisioning_slug: provSlug,
+        status: "offline",
       } as any).eq("id", routerId);
       if (updateErr) throw updateErr;
       addLog("Configuration saved", "success");
@@ -422,7 +423,7 @@ function RoutersPage() {
         else addLog("Hotspot portal URL saved", "success");
       }
 
-      // 3. Verify provisioning script is reachable
+      // 3. Verify provisioning script is reachable and valid
       addLog("Verifying provisioning script URL...", "info");
       const provisionUrl = `${window.location.origin}/provision/${provSlug}`;
       try {
@@ -435,33 +436,50 @@ function RoutersPage() {
         throw new Error(`Provisioning script not reachable: ${e.message} — check slug`);
       }
 
-      // 4. Try live ping — succeeds if router has a public IP set, warns otherwise
-      addLog("Connecting to router API...", "info");
-      const { data: pingData, error: pingErr } = await supabase.functions.invoke("router-command", {
-        body: { routerId, command: "get_status" },
+      // 4. Poll DB for router coming online via heartbeat (max 90s)
+      // The provisioning script calls /provision/notify/<slug> which sets status=online
+      addLog("Waiting for router to confirm online via provisioning script...", "info");
+      addLog(`Paste this script in Winbox Terminal if not done yet, then wait:`, "info");
+
+      const confirmed = await new Promise<boolean>((resolve) => {
+        let elapsed = 0;
+        const interval = setInterval(async () => {
+          elapsed += 4000;
+          const { data } = await supabase
+            .from("routers")
+            .select("status, ip_address")
+            .eq("id", routerId!)
+            .single();
+          if (data?.status === "online") {
+            clearInterval(interval);
+            if (data.ip_address) setVpnAddress(data.ip_address);
+            resolve(true);
+          } else if (elapsed >= 90000) {
+            clearInterval(interval);
+            resolve(false);
+          }
+        }, 4000);
       });
-      if (pingErr) {
-        addLog(`Router API unreachable: ${pingErr.message}`, "warn");
-      } else if (pingData?.success) {
-        const s = pingData.data as any;
-        addLog(`Router confirmed online — ${s.identity ?? identity} | CPU ${s.cpuLoad}% | Uptime ${s.uptime}`, "success");
-        // Update router status to online in DB
-        await supabase.from("routers").update({ status: "online", last_seen: new Date().toISOString() }).eq("id", routerId);
-      } else if (pingData?.offline) {
-        addLog("Router has no public IP — status will update automatically via heartbeat after provisioning script runs", "warn");
+
+      if (!confirmed) {
+        addLog("Router did not come online within 90s — paste the provisioning script in Winbox Terminal and reprovision", "warn");
       } else {
-        addLog(`Router unreachable: ${pingData?.error ?? "connection failed"} — ensure public IP is set in Edit`, "warn");
+        addLog(`Router confirmed online — heartbeat received`, "success");
+        await supabase.from("routers").update({ last_seen: new Date().toISOString() }).eq("id", routerId);
       }
 
       // 5. Confirm services
       addLog(`Services configured: ${selectedServices.map((s) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ")}`, "success");
       addLog(`Bridge port: ${bridgePort} → ${provisioningTemplate.bridgeName}`, "success");
       addLog(`Subnet: ${customSubnet ? subnetValue : "172.31.0.0/16"}`, "success");
-      addLog("Configuration complete — ready to provision subscribers", "success");
 
-      // 6. Refresh router list so landing page shows updated services
+      if (confirmed) {
+        addLog("Configuration complete — router is live and ready for subscribers", "success");
+      } else {
+        addLog("Configuration saved — router will go live once provisioning script is run", "warn");
+      }
+
       queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
-
       setApplyDone(true);
     } catch (err: any) {
       addLog(`Error: ${err.message || "Configuration failed"}`, "error");
@@ -1194,46 +1212,7 @@ function RoutersPage() {
               </div>
             </div>
 
-            <div className="border-t border-border pt-5">
-              <h2 className="font-bold text-base mb-1">API credentials</h2>
-              <p className="text-xs text-muted-foreground mb-4">
-                Used to ping the router and manage subscribers. Enable the API port first:
-                <code className="ml-1 bg-muted px-1.5 py-0.5 rounded text-[11px] font-mono">/ip service set api disabled=no</code>
-              </p>
-              <div className="space-y-3">
-                <div>
-                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block mb-1.5">Router IP / Hostname</label>
-                  <input
-                    value={routerIp}
-                    onChange={(e) => setRouterIp(e.target.value)}
-                    className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
-                    placeholder="e.g. 192.168.88.1"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block mb-1.5">Username</label>
-                    <input
-                      value={apiUsername}
-                      onChange={(e) => setApiUsername(e.target.value)}
-                      className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
-                      placeholder="admin"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block mb-1.5">Password</label>
-                    <input
-                      type="password"
-                      value={apiPassword}
-                      onChange={(e) => setApiPassword(e.target.value)}
-                      className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
-                      placeholder="leave blank if none"
-                    />
-                  </div>
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">Credentials are optional — you can skip and add them later via Edit.</p>
-            </div>
+
           </div>
         )}
 
@@ -1489,9 +1468,14 @@ function RoutersPage() {
                     <p className="text-sm text-destructive font-medium">⚠ Configuration encountered errors</p>
                     <p className="text-xs text-destructive/70 mt-1">Check the logs above for details. You can retry after fixing any issues.</p>
                   </>
+                ) : logLines.some(l => l.message.includes("did not come online")) ? (
+                  <>
+                    <p className="text-sm text-amber-600 dark:text-amber-400 font-medium">⚠ Configuration saved — router not yet online</p>
+                    <p className="text-xs text-amber-600/70 dark:text-amber-400/70 mt-1">Paste the provisioning script in Winbox Terminal, then click Reprovision to confirm.</p>
+                  </>
                 ) : (
                   <>
-                    <p className="text-sm text-success font-medium">✓ Device provisioning workflow completed</p>
+                    <p className="text-sm text-success font-medium">✓ Router is live — provisioning complete</p>
                     <p className="text-xs text-success/70 mt-1">You can now add subscribers and manage services on this router.</p>
                   </>
                 )}
@@ -1541,9 +1525,6 @@ function RoutersPage() {
                     name: identity.trim(),
                     vendor: "mikrotik",
                     status: "offline",
-                    ...(routerIp && { connection_string: routerIp }),
-                    ...(apiUsername && { api_username: apiUsername }),
-                    ...(apiPassword && { api_password: apiPassword }),
                     api_port: 8728,
                   } as any).select("id").single();
                   if (error) { toast.error(error.message); return; }
