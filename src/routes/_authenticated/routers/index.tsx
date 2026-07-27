@@ -439,9 +439,10 @@ function RoutersPage() {
       if (existingRadius?.id) {
         await supabase.from("radius_servers" as any).update(radiusPayload).eq("id", existingRadius.id);
       } else {
-        await supabase.from("radius_servers" as any).insert({ ...radiusPayload, host: "127.0.0.1" });
+        // host will be updated by markRouterOnline when router checks in with real SERVER_IP
+        await supabase.from("radius_servers" as any).insert({ ...radiusPayload, host: "pending" });
       }
-      addLog("RADIUS server configured", "success");
+      addLog("RADIUS server record saved", "success");
 
       // 4. Save hotspot portal URL if hotspot enabled
       if (hotspot) {

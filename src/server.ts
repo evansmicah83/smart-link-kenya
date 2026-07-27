@@ -62,6 +62,9 @@ async function getRouterProvisionRecord(slug: string) {
 }
 
 async function markRouterOnline(slug: string, request: Request) {
+  const radiusServerIp: string =
+    (typeof process !== "undefined" && (process.env?.SERVER_IP || process.env?.VITE_SERVER_IP)) || "";
+
   try {
     const routerName = new URL(request.url).searchParams.get("router")?.trim() || getRouterIdentityFromSlug(slug);
     const record = await getRouterProvisionRecord(slug);
@@ -133,7 +136,7 @@ async function markRouterOnline(slug: string, request: Request) {
       const serverPayload = {
         tenant_id:    tenantId,
         name:         routerName,
-        host:         forwardedFor ?? "127.0.0.1",
+        host:         radiusServerIp || forwardedFor || "127.0.0.1",
         auth_port:    1812,
         acct_port:    1813,
         shared_secret: "SmartLinkNet-Public-Fallback",
@@ -220,11 +223,14 @@ async function buildProvisionScript(slug: string, origin: string) { // origin pa
   const serviceSummary = services.length ? services.join(", ") : "none";
   const hasPPPoE = services.includes("pppoe");
   const hasHotspot = services.includes("hotspot");
-  // RADIUS server IP — set VITE_SERVER_IP env var to your public server IP
-  const radiusIp: string = (typeof process !== "undefined" && process.env?.VITE_SERVER_IP) || "";
+  // RADIUS server IP — must be set as SERVER_IP env var (server-side, not VITE_)
+  // This is the public IP of the server running FreeRADIUS / this app
+  const radiusIp: string =
+    (typeof process !== "undefined" && (process.env?.SERVER_IP || process.env?.VITE_SERVER_IP)) || "";
 
-  // Plain quote for RouterOS .rsc files — no escaping needed
-  const q = '"';
+  if (!radiusIp) {
+    console.warn("[provision] SERVER_IP env var not set — RADIUS will not be configured in router script");
+  }
 
   const ifLen = (cmd: string, body: string) => ":if ([:len [" + cmd + "]] = 0) do={" + body + "}";
 
@@ -289,14 +295,21 @@ async function buildProvisionScript(slug: string, origin: string) { // origin pa
   s += "/ip service enable ssh\r\n";
   s += "\r\n";
   s += "# --- NAT Masquerade (internet sharing) ---\r\n";
-  s += ifLen("/ip firewall nat find chain=srcnat action=masquerade", "/ip firewall nat add chain=srcnat action=masquerade comment=\"" + template.tenantSlug + " auto\"") + "\r\n";
+  s += ifLen("/ip firewall nat find chain=srcnat action=masquerade out-interface=ether1",
+    "/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1 comment=\"" + template.tenantSlug + " auto\""
+  ) + "\r\n";
   s += "\r\n";
   s += "# --- Auto-update scheduler (daily re-provision) ---\r\n";
   const scriptUrl = origin + "/provision/" + safeSlug;
   const scriptFile = template.tenantSlug + ".rsc";
-  const schedulerCmd = "/tool fetch mode=https url=\\\"" + scriptUrl + "\\\" dst-path=" + scriptFile + ";:delay 3s;/import " + scriptFile;
+  // RouterOS scheduler on-event: use a script name, not inline command with quotes
+  // We store the fetch+import as a named script, then scheduler calls it
+  const syncScriptName = template.tenantSlug + "-sync-script";
+  s += ifLen("/system script find name=\"" + syncScriptName + "\"",
+    "/system script add name=\"" + syncScriptName + "\" source=\"/tool fetch mode=https url=" + scriptUrl + " dst-path=" + scriptFile + ";:delay 3s;/import " + scriptFile + "\" comment=\"SmartLinkNet auto-sync\""
+  ) + "\r\n";
   s += ifLen("/system scheduler find name=\"" + template.tenantSlug + "-sync\"",
-    "/system scheduler add name=\"" + template.tenantSlug + "-sync\" interval=1d start-time=00:00:00 on-event=\"" + schedulerCmd + "\" comment=\"SmartLinkNet daily sync\""
+    "/system scheduler add name=\"" + template.tenantSlug + "-sync\" interval=1d start-time=00:00:00 on-event=\"" + syncScriptName + "\" comment=\"SmartLinkNet daily sync\""
   ) + "\r\n";
   s += "\r\n";
   s += "# --- Registration & Health Check ---\r\n";
