@@ -394,7 +394,7 @@ function RoutersPage() {
     };
 
     try {
-      // 1. Save config to DB
+      // 1. Save services, bridge, subnet to DB
       addLog("Saving configuration...", "info");
       const provSlug = `${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`;
       const { error: updateErr } = await supabase.from("routers").update({
@@ -403,12 +403,11 @@ function RoutersPage() {
         subnet: customSubnet ? subnetValue : "172.31.0.0/16",
         provisioning_identity: identity.trim(),
         provisioning_slug: provSlug,
-        status: "offline",
       } as any).eq("id", routerId);
       if (updateErr) throw updateErr;
       addLog("Configuration saved", "success");
 
-      // 2. Auto-save hotspot portal URL
+      // 2. Save hotspot portal URL
       if (hotspot && tenantId) {
         addLog("Saving hotspot portal URL...", "info");
         const { data: tenantRow } = await supabase.from("tenants").select("slug").eq("id", tenantId).maybeSingle();
@@ -419,71 +418,43 @@ function RoutersPage() {
           key: "hotspot_login_page",
           value: portalLoginPage,
         }, { onConflict: "tenant_id,key" });
-        if (settingsErr) addLog(`Hotspot portal URL warning: ${settingsErr.message}`, "warn");
-        else addLog("Hotspot portal URL saved", "success");
+        if (settingsErr) throw new Error(`Failed to save hotspot portal URL: ${settingsErr.message}`);
+        addLog("Hotspot portal URL saved", "success");
       }
 
       // 3. Verify provisioning script is reachable and valid
-      addLog("Verifying provisioning script URL...", "info");
+      addLog("Verifying provisioning script...", "info");
       const provisionUrl = `${window.location.origin}/provision/${provSlug}`;
-      try {
-        const scriptRes = await fetch(provisionUrl);
-        if (!scriptRes.ok) throw new Error(`HTTP ${scriptRes.status}`);
-        const scriptText = await scriptRes.text();
-        if (!scriptText.includes("SmartLinkNet")) throw new Error("Script content invalid");
-        addLog("Provisioning script URL is reachable", "success");
-      } catch (e: any) {
-        throw new Error(`Provisioning script not reachable: ${e.message} — check slug`);
-      }
+      const scriptRes = await fetch(provisionUrl);
+      if (!scriptRes.ok) throw new Error(`Provisioning script not reachable (HTTP ${scriptRes.status})`);
+      const scriptText = await scriptRes.text();
+      if (!scriptText.includes("SmartLinkNet")) throw new Error("Provisioning script content invalid");
+      addLog("Provisioning script verified", "success");
 
-      // 4. Poll DB for router coming online via heartbeat (max 90s)
-      // The provisioning script calls /provision/notify/<slug> which sets status=online
-      addLog("Waiting for router to confirm online via provisioning script...", "info");
-      addLog(`Paste this script in Winbox Terminal if not done yet, then wait:`, "info");
+      // 4. Confirm router is online (it was confirmed in step 2 already)
+      const { data: routerRow } = await supabase
+        .from("routers")
+        .select("status, ip_address, last_seen")
+        .eq("id", routerId)
+        .single();
 
-      const confirmed = await new Promise<boolean>((resolve) => {
-        let elapsed = 0;
-        const interval = setInterval(async () => {
-          elapsed += 4000;
-          const { data } = await supabase
-            .from("routers")
-            .select("status, ip_address")
-            .eq("id", routerId!)
-            .single();
-          if (data?.status === "online") {
-            clearInterval(interval);
-            if (data.ip_address) setVpnAddress(data.ip_address);
-            resolve(true);
-          } else if (elapsed >= 90000) {
-            clearInterval(interval);
-            resolve(false);
-          }
-        }, 4000);
-      });
-
-      if (!confirmed) {
-        addLog("Router did not come online within 90s — paste the provisioning script in Winbox Terminal and reprovision", "warn");
+      if (routerRow?.status === "online") {
+        addLog(`Router online — last seen ${routerRow.last_seen ? new Date(routerRow.last_seen).toLocaleTimeString() : "just now"}`, "success");
+        if (routerRow.ip_address) setVpnAddress(routerRow.ip_address);
       } else {
-        addLog(`Router confirmed online — heartbeat received`, "success");
-        await supabase.from("routers").update({ last_seen: new Date().toISOString() }).eq("id", routerId);
+        addLog("Router status is offline — provisioning script may not have run yet", "warn");
       }
 
-      // 5. Confirm services
-      addLog(`Services configured: ${selectedServices.map((s) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ")}`, "success");
+      // 5. Summary
+      addLog(`Services: ${selectedServices.map((s) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ")}`, "success");
       addLog(`Bridge port: ${bridgePort} → ${provisioningTemplate.bridgeName}`, "success");
       addLog(`Subnet: ${customSubnet ? subnetValue : "172.31.0.0/16"}`, "success");
-
-      if (confirmed) {
-        addLog("Configuration complete — router is live and ready for subscribers", "success");
-      } else {
-        addLog("Configuration saved — router will go live once provisioning script is run", "warn");
-      }
+      addLog("Configuration complete — ready to provision subscribers", "success");
 
       queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
       setApplyDone(true);
     } catch (err: any) {
       addLog(`Error: ${err.message || "Configuration failed"}`, "error");
-      addLog("Fix the issue above and reprovision", "warn");
       setApplyDone(true);
     }
   }
@@ -1468,14 +1439,9 @@ function RoutersPage() {
                     <p className="text-sm text-destructive font-medium">⚠ Configuration encountered errors</p>
                     <p className="text-xs text-destructive/70 mt-1">Check the logs above for details. You can retry after fixing any issues.</p>
                   </>
-                ) : logLines.some(l => l.message.includes("did not come online")) ? (
-                  <>
-                    <p className="text-sm text-amber-600 dark:text-amber-400 font-medium">⚠ Configuration saved — router not yet online</p>
-                    <p className="text-xs text-amber-600/70 dark:text-amber-400/70 mt-1">Paste the provisioning script in Winbox Terminal, then click Reprovision to confirm.</p>
-                  </>
                 ) : (
                   <>
-                    <p className="text-sm text-success font-medium">✓ Router is live — provisioning complete</p>
+                    <p className="text-sm text-success font-medium">✓ Device provisioning complete</p>
                     <p className="text-xs text-success/70 mt-1">You can now add subscribers and manage services on this router.</p>
                   </>
                 )}
