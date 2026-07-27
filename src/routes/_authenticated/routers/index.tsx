@@ -170,6 +170,9 @@ function RoutersPage() {
   const [applyDone, setApplyDone] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
+  const [routerIp, setRouterIp] = useState("");
+  const [apiUsername, setApiUsername] = useState("admin");
+  const [apiPassword, setApiPassword] = useState("");
   const [pppoe, setPppoe] = useState(false);
   const [hotspot, setHotspot] = useState(false);
   const [bridgePort, setBridgePort] = useState<"ether1" | "ether2">("ether2");
@@ -295,6 +298,9 @@ function RoutersPage() {
     setStep(1);
     setIdentity("");
     setRouterId(null);
+    setRouterIp("");
+    setApiUsername("admin");
+    setApiPassword("");
     setLogLines([]);
     setApplyDone(false);
   }, [user?.id]);
@@ -416,21 +422,21 @@ function RoutersPage() {
       if (!scriptRes.ok) throw new Error(`Provisioning script not reachable (HTTP ${scriptRes.status}) — check slug`);
       addLog("Provisioning script URL is reachable", "success");
 
-      // 4. Live ping the router via router-command
-      addLog("Pinging router via API...", "info");
-      const { data: pingData, error: pingErr } = await supabase.functions.invoke("router-command", {
-        body: { routerId, command: "get_status" },
-      });
-      if (pingErr || !pingData?.success) {
-        // Mark offline in DB so UI reflects reality
-        await supabase.from("routers").update({ status: "offline" }).eq("id", routerId);
-        addLog(`Router is unreachable: ${pingData?.error ?? pingErr?.message ?? "no response"}`, "error");
-        addLog("Paste the provisioning script on the router first, then reprovision", "warn");
-        setApplyDone(true);
-        return;
+      // 4. Live ping the router via router-command (skip if no credentials)
+      if (apiUsername && routerIp) {
+        addLog("Pinging router via API...", "info");
+        const { data: pingData, error: pingErr } = await supabase.functions.invoke("router-command", {
+          body: { routerId, command: "get_status" },
+        });
+        if (pingErr || !pingData?.success) {
+          addLog(`Router unreachable: ${pingData?.error ?? pingErr?.message ?? "no response"} — paste the provisioning script first`, "warn");
+        } else {
+          const status = pingData.data as any;
+          addLog(`Router online — ${status.identity ?? identity} | CPU ${status.cpuLoad}% | Uptime ${status.uptime}`, "success");
+        }
+      } else {
+        addLog("No API credentials — skipping live ping (router will be verified after provisioning)", "warn");
       }
-      const status = pingData.data as any;
-      addLog(`Router online — ${status.identity ?? identity} | CPU ${status.cpuLoad}% | Uptime ${status.uptime}`, "success");
 
       // 5. Confirm services
       addLog(`Services configured: ${selectedServices.map((s) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ")}`, "success");
@@ -1099,15 +1105,14 @@ function RoutersPage() {
         <WizardHeader />
         <StepIndicator current={step} />
 
-        {/* ── Step 1: Router identity ── */}
+        {/* ── Step 1: Router identity + credentials ── */}
         {step === 1 && (
-          <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
-            <h2 className="font-bold text-base mb-1">Router identity</h2>
-            <p className="text-xs text-muted-foreground mb-5">
-              Auto-generated from the Winbox System → Identity. You can customize it below.
-            </p>
-            <label className="block">
-              <span className="text-sm font-semibold block mb-2">MikroTik identity</span>
+          <div className="rounded-2xl border border-border bg-card p-4 sm:p-6 space-y-5">
+            <div>
+              <h2 className="font-bold text-base mb-1">Router identity</h2>
+              <p className="text-xs text-muted-foreground mb-4">
+                Match the identity shown in Winbox under System → Identity.
+              </p>
               <div className="flex gap-2">
                 <input
                   value={identity}
@@ -1116,20 +1121,54 @@ function RoutersPage() {
                   placeholder="e.g. MikroTik1"
                 />
                 <button
-                  onClick={() => {
-                    const nextNum = routers.length + 1;
-                    setIdentity(`MikroTik${nextNum}`);
-                    toast.success("Reset to default");
-                  }}
+                  onClick={() => { setIdentity(`MikroTik${routers.length + 1}`); toast.success("Reset to default"); }}
                   className="px-4 py-3 rounded-xl border border-border bg-muted hover:bg-muted/80 text-sm font-medium transition-colors whitespace-nowrap"
                 >
                   Auto-fill
                 </button>
               </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Currently auto-generating: <strong>MikroTik{routers.length + 1}</strong> (editable)
+            </div>
+
+            <div className="border-t border-border pt-5">
+              <h2 className="font-bold text-base mb-1">API credentials</h2>
+              <p className="text-xs text-muted-foreground mb-4">
+                Used to ping the router and manage subscribers. Enable the API port first:
+                <code className="ml-1 bg-muted px-1.5 py-0.5 rounded text-[11px] font-mono">/ip service set api disabled=no</code>
               </p>
-            </label>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block mb-1.5">Router IP / Hostname</label>
+                  <input
+                    value={routerIp}
+                    onChange={(e) => setRouterIp(e.target.value)}
+                    className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                    placeholder="e.g. 192.168.88.1"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block mb-1.5">Username</label>
+                    <input
+                      value={apiUsername}
+                      onChange={(e) => setApiUsername(e.target.value)}
+                      className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                      placeholder="admin"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block mb-1.5">Password</label>
+                    <input
+                      type="password"
+                      value={apiPassword}
+                      onChange={(e) => setApiPassword(e.target.value)}
+                      className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                      placeholder="leave blank if none"
+                    />
+                  </div>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">Credentials are optional — you can skip and add them later via Edit.</p>
+            </div>
           </div>
         )}
 
@@ -1433,7 +1472,14 @@ function RoutersPage() {
                   if (!identity.trim()) { toast.error("Enter a router identity"); return; }
                   if (!tenantId) { toast.error("No workspace found"); return; }
                   const { data, error } = await supabase.from("routers").insert({
-                    tenant_id: tenantId, name: identity.trim(), vendor: "mikrotik", status: "offline",
+                    tenant_id: tenantId,
+                    name: identity.trim(),
+                    vendor: "mikrotik",
+                    status: "offline",
+                    ...(routerIp && { connection_string: routerIp }),
+                    ...(apiUsername && { api_username: apiUsername }),
+                    ...(apiPassword && { api_password: apiPassword }),
+                    api_port: 80,
                   } as any).select("id").single();
                   if (error) { toast.error(error.message); return; }
                   setRouterId(data.id); setRouterOnline(false); setLogLines([]); setApplyDone(false); setStep(2);
