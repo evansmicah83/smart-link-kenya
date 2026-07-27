@@ -224,21 +224,22 @@ function RoutersPage() {
     refetchInterval: 30000,
   });
 
-  // Auto-sync all routers every 60s in the background
+  // Auto-sync: only attempt live check for routers with a public IP
   useEffect(() => {
     if (!tenantId) return;
     const interval = setInterval(async () => {
       const rows = routersQuery.data;
       if (!rows?.length) return;
+      const publicIpRouters = rows.filter((r) => r.connection_string || r.ip_address);
+      if (!publicIpRouters.length) return;
       await Promise.all(
-        rows.map(async (r) => {
+        publicIpRouters.map(async (r) => {
           const { data } = await supabase.functions.invoke("router-command", {
             body: { routerId: r.id, command: "get_status" },
           });
-          // Only mark offline on real connection failures, not missing credentials
           if (data?.success && r.status !== "online") {
             await supabase.from("routers").update({ status: "online" }).eq("id", r.id);
-          } else if (!data?.success && !data?.offline && r.status !== "offline") {
+          } else if (!data?.success && r.status !== "offline") {
             await supabase.from("routers").update({ status: "offline" }).eq("id", r.id);
           }
         })
@@ -498,29 +499,50 @@ function RoutersPage() {
     }
   }
 
-  async function handleSyncRouter(routerId: string) {
-    setSyncing((prev) => new Set([...prev, routerId]));
+  async function handleSyncRouter(id: string) {
+    setSyncing((prev) => new Set([...prev, id]));
     try {
-      const { data, error } = await supabase.functions.invoke("router-command", {
-        body: { routerId, command: "get_status" },
-      });
-      if (error || !data?.success) {
-        // Only mark offline if it's a real connection failure, not a credentials/config issue
-        if (!data?.offline) {
-          await supabase.from("routers").update({ status: "offline" }).eq("id", routerId);
+      const { data: row, error } = await supabase
+        .from("routers")
+        .select("status, last_seen, connection_string, ip_address")
+        .eq("id", id)
+        .single();
+
+      if (error) throw error;
+
+      const hasPublicIp = !!(row?.connection_string || row?.ip_address);
+
+      if (hasPublicIp) {
+        // Router has a reachable address — try live ping via edge function
+        const { data } = await supabase.functions.invoke("router-command", {
+          body: { routerId: id, command: "get_status" },
+        });
+        if (data?.success) {
+          toast.success("Router is online");
+        } else {
+          await supabase.from("routers").update({ status: "offline" }).eq("id", id);
+          toast.error("Router unreachable — marked offline");
         }
-        toast.error(data?.offline ? "Router has no public IP configured — set IP in Edit" : "Router unreachable — marked offline");
       } else {
-        toast.success("Router is online");
+        // NAT'd router — status is set by heartbeat, just reflect DB truth
+        if (row?.status === "online") {
+          const lastSeen = row.last_seen
+            ? new Date(row.last_seen).toLocaleTimeString()
+            : "unknown";
+          toast.success(`Router is online — last heartbeat ${lastSeen}`);
+        } else {
+          toast.info("Router is offline — waiting for provisioning script to run");
+        }
       }
+
       queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
     } catch (err: any) {
       toast.error("Sync failed");
     } finally {
       setSyncing((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(routerId);
-        return newSet;
+        const s = new Set(prev);
+        s.delete(id);
+        return s;
       });
     }
   }
