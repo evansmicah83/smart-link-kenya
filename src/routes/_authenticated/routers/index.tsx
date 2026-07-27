@@ -425,20 +425,33 @@ function RoutersPage() {
       if (!scriptRes.ok) throw new Error(`Provisioning script not reachable (HTTP ${scriptRes.status}) — check slug`);
       addLog("Provisioning script URL is reachable", "success");
 
-      // 4. Live ping the router via router-command (skip if no credentials)
-      if (apiUsername && routerIp) {
-        addLog("Pinging router via API...", "info");
-        const { data: pingData, error: pingErr } = await supabase.functions.invoke("router-command", {
-          body: { routerId, command: "get_status" },
-        });
-        if (pingErr || !pingData?.success) {
-          addLog(`Router unreachable: ${pingData?.error ?? pingErr?.message ?? "no response"} — paste the provisioning script first`, "warn");
-        } else {
-          const status = pingData.data as any;
-          addLog(`Router online — ${status.identity ?? identity} | CPU ${status.cpuLoad}% | Uptime ${status.uptime}`, "success");
-        }
+      // 4. Execute provisioning script on the router
+      addLog("Connecting to router API...", "info");
+      const { data: pingData, error: pingErr } = await supabase.functions.invoke("router-command", {
+        body: { routerId, command: "get_status" },
+      });
+      if (pingErr || !pingData?.success) {
+        addLog(`Cannot reach router: ${pingData?.error ?? pingErr?.message ?? "no response"}`, "warn");
+        addLog("Credentials not set or router unreachable — paste the provisioning script manually in Winbox Terminal", "warn");
       } else {
-        addLog("No API credentials — skipping live ping (router will be verified after provisioning)", "warn");
+        const status = pingData.data as any;
+        addLog(`Connected — ${status.identity ?? identity} | RouterOS ${status.firmwareVersion ?? ""} | CPU ${status.cpuLoad}%`, "success");
+
+        addLog("Pushing provisioning script to router...", "info");
+        const provisionUrl = `${window.location.origin}/provision/${provSlug}`;
+        const filename = `${provSlug}.rsc`;
+        const { data: scriptData, error: scriptErr } = await supabase.functions.invoke("router-command", {
+          body: { routerId, command: "run_script", params: { url: provisionUrl, filename } },
+        });
+        if (scriptErr || !scriptData?.success) {
+          addLog(`Script push failed: ${scriptData?.error ?? scriptErr?.message ?? "unknown error"}`, "warn");
+          addLog("Paste the provisioning script manually in Winbox Terminal as fallback", "warn");
+        } else {
+          addLog("Provisioning script executed on router ✓", "success");
+          addLog("Bridge, DHCP, NAT, RADIUS and services configured", "success");
+          // Mark online since we just successfully communicated
+          await supabase.from("routers").update({ status: "online" }).eq("id", routerId);
+        }
       }
 
       // 5. Confirm services

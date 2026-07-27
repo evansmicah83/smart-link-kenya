@@ -248,6 +248,27 @@ async function handleMikrotikRest(
       return mt.post("/ping", { address: target, count: "3" });
     }
 
+    case "run_script": {
+      const url = params.url as string;
+      const filename = params.filename as string;
+      if (!url || !filename) throw new Error("url and filename required");
+
+      // Step 1: fetch the script file onto the router
+      await mt.post("/tool/fetch", {
+        url,
+        "dst-path": filename,
+        "mode": "https",
+      });
+
+      // Step 2: wait 2s for file to land
+      await new Promise((r) => setTimeout(r, 2000));
+
+      // Step 3: import/execute the script
+      await mt.post("/import", { "file-name": filename });
+
+      return { executed: true, filename };
+    }
+
     default:
       throw new Error(`Unknown command: ${command}`);
   }
