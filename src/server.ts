@@ -73,7 +73,7 @@ async function markRouterOnline(slug: string, request: Request) {
       const { data, error } = await supabaseAdmin
         .from("routers")
         .select("id, tenant_id")
-        .ilike("name", routerName)
+        .ilike("name", `%${routerName}%`)
         .limit(1);
 
       if (error || !data?.[0]?.id) return;
@@ -209,7 +209,7 @@ async function buildProvisionScript(slug: string, origin: string) { // origin pa
     { company_name: brandingRow.data?.company_name ?? null },
     { services, bridgePort, subnet },
   );
-  const notifyUrl = origin + "/provision/notify/" + safeSlug + "?router=" + encodeURIComponent(identity);
+  const notifyUrl = origin + "/provision/notify/" + safeSlug + "?router=" + encodeURIComponent(record?.provisioning_identity ?? identity);
   const subnetParts = subnet.split("/");
   const networkAddress = subnetParts[0];
   const prefixLength = subnetParts[1] ?? "16";
