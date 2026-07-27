@@ -488,25 +488,28 @@ function RoutersPage() {
     try {
       const { data: row, error } = await supabase
         .from("routers")
-        .select("status, last_seen")
+        .select("status, last_seen, provisioning_slug, name")
         .eq("id", id)
         .single();
 
       if (error) throw error;
 
-      // Status is authoritative from the heartbeat (/provision/notify/<slug>)
-      if (row?.status === "online") {
-        const lastSeen = row.last_seen
-          ? new Date(row.last_seen).toLocaleTimeString()
-          : "unknown";
-        toast.success(`Online — last heartbeat ${lastSeen}`);
+      if (row?.status === "online" && row.last_seen) {
+        const minutesAgo = Math.floor((Date.now() - new Date(row.last_seen).getTime()) / 60000);
+        const timeLabel = minutesAgo < 1 ? "just now" : minutesAgo === 1 ? "1 minute ago" : `${minutesAgo} minutes ago`;
+        toast.success(`${row.name} is online — last seen ${timeLabel}`);
+      } else if (row?.status === "online" && !row.last_seen) {
+        // Marked online but no heartbeat timestamp — treat as stale
+        await supabase.from("routers").update({ status: "offline" }).eq("id", id);
+        toast.error(`${row.name} has not sent a heartbeat — marked offline. Run the provisioning script again.`);
       } else {
-        toast.info("Offline — router has not checked in yet");
+        // Offline — give actionable guidance
+        toast.error(`${row.name} is offline. Open Winbox and run the provisioning script to bring it online.`);
       }
 
       queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
     } catch {
-      toast.error("Sync failed");
+      toast.error("Sync failed — please try again.");
     } finally {
       setSyncing((prev) => {
         const s = new Set(prev);
