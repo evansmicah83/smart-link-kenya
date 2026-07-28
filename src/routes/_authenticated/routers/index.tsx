@@ -572,7 +572,7 @@ function RoutersPage() {
         addLog("Apply timed out — router API unreachable. DB config was saved. Enable port 8728 in Winbox then retry.", "warn");
         setApplyTimedOut(true);
         setApplyDone(true);
-      }, 20_000);
+      }, 30_000);
       safetyTimerRef.current = safetyTimer;
 
       const res = await fetch(`${SUPABASE_FUNCTIONS}/apply-router-config`, {
