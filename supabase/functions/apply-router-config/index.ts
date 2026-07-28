@@ -209,8 +209,9 @@ serve(async (req: Request) => {
     await log("complete", `Apply complete — ${summary}`, routerApiOk);
 
     return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
-  } catch (err) {
-    console.error(err);
-    return new Response(JSON.stringify({ error: "Internal error" }), { status: 500, headers: { ...CORS, "content-type": "application/json" } });
+  } catch (err: any) {
+    const msg = err?.message ?? String(err);
+    console.error("apply-router-config error:", msg);
+    return new Response(JSON.stringify({ error: "Internal error", detail: msg }), { status: 500, headers: { ...CORS, "content-type": "application/json" } });
   }
 });
