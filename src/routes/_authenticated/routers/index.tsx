@@ -313,8 +313,8 @@ function RoutersPage() {
 
   const bridgeName = provisioningTemplate.bridgeName;
   const saasDomain = window.location.origin;
-  const provisionScript = tenantId
-    ? `/tool fetch mode=https url=\"${saasDomain}/provision/${tenantId}-${identity.toLowerCase().replace(/\s+/g, "-")}\" dst-path=${provisioningTemplate.tenantSlug}.rsc;:delay 2s;/import ${provisioningTemplate.tenantSlug}.rsc;`
+  const provisionScript = provisionToken
+    ? `/tool fetch mode=https url=\"${saasDomain}/functions/v1/provision?token=${encodeURIComponent(provisionToken)}\" dst-path=smartlinknet-provision.rsc;:delay 2s;/import smartlinknet-provision.rsc;`
     : "";
 
   useEffect(() => {
