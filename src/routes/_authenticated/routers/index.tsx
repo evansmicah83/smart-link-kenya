@@ -170,6 +170,7 @@ function RoutersPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [logLines, setLogLines] = useState<Array<{ ts: string; level: "info" | "success" | "warn" | "error"; icon: string; message: string }>>([]);
   const [applyDone, setApplyDone] = useState(false);
+  const [applyTimedOut, setApplyTimedOut] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   const [routerIp, setRouterIp] = useState("");
@@ -461,6 +462,7 @@ function RoutersPage() {
 
     setStep(4);
     setApplyDone(false);
+    setApplyTimedOut(false);
     setLogLines([]);
 
     const addLog = (message: string, level: "info" | "success" | "warn" | "error" = "info") => {
@@ -567,7 +569,8 @@ function RoutersPage() {
 
       // Safety timeout — if no realtime event arrives within 45s, mark done
       const safetyTimer = setTimeout(() => {
-        addLog("Apply timed out — router may be unreachable. Check diagnostics tab.", "warn");
+        addLog("Apply timed out — router API unreachable. DB config was saved. Enable port 8728 in Winbox then retry.", "warn");
+        setApplyTimedOut(true);
         setApplyDone(true);
       }, 45_000);
       safetyTimerRef.current = safetyTimer;
@@ -596,6 +599,7 @@ function RoutersPage() {
   async function reInvokeApply() {
     if (!routerId) return;
     setApplyDone(false);
+    setApplyTimedOut(false);
     setLogLines([]);
     try {
       if (realtimeChannelRef.current) {
@@ -1690,11 +1694,16 @@ function RoutersPage() {
             {/* Done indicator */}
             {applyDone && (
               <div className={`rounded-xl p-4 mb-4 border ${
-                logLines.some(l => l.level === "error")
-                  ? "bg-destructive/10 border-destructive/20"
+                applyTimedOut || logLines.some(l => l.level === "error")
+                  ? "bg-amber-500/10 border-amber-500/30"
                   : "bg-success/10 border-success/20"
               }`}>
-                {logLines.some(l => l.level === "error") ? (
+                {applyTimedOut ? (
+                  <>
+                    <p className="text-sm text-amber-600 dark:text-amber-400 font-medium">⚠ Router API unreachable — DB config saved</p>
+                    <p className="text-xs text-amber-700/70 dark:text-amber-400/70 mt-1">NAS and RADIUS records were saved to DB. The router's REST API did not respond — open Winbox, run <code>/ip service set api disabled=no</code>, then retry.</p>
+                  </>
+                ) : logLines.some(l => l.level === "error") ? (
                   <>
                     <p className="text-sm text-destructive font-medium">⚠ Configuration encountered errors</p>
                     <p className="text-xs text-destructive/70 mt-1">Check the logs above for details. You can retry after fixing any issues.</p>
@@ -1702,7 +1711,7 @@ function RoutersPage() {
                 ) : (
                   <>
                     <p className="text-sm text-success font-medium">✓ Router fully provisioned and active</p>
-                    <p className="text-xs text-success/70 mt-1">Bridge, DHCP, NAT, RADIUS and services were configured on the router when the script ran. Subscribers can now be added.</p>
+                    <p className="text-xs text-success/70 mt-1">Identity, RADIUS, hotspot profile, PPPoE profile and heartbeat scheduler were pushed live to the router.</p>
                   </>
                 )}
               </div>
