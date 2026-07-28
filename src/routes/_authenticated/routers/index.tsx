@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect, useRef, useMemo } from "react";
 import {
   RefreshCw, ChevronLeft, AlertTriangle,
@@ -176,6 +176,9 @@ function RoutersPage() {
   const [pppoe, setPppoe] = useState(false);
   const [hotspot, setHotspot] = useState(false);
   const [bridgePort, setBridgePort] = useState<"ether1" | "ether2">("ether2");
+  // New: support multiple bridge ports and explicit uplink selection
+  const [bridgePorts, setBridgePorts] = useState<string[]>(["ether2"]);
+  const [uplinkInterface, setUplinkInterface] = useState<string | null>(null);
   const [customSubnet, setCustomSubnet] = useState(false);
   const [subnetValue, setSubnetValue] = useState("172.31.0.0/16");
   const selectedServices = useMemo(() => [hotspot && "hotspot", pppoe && "pppoe"].filter(Boolean) as string[], [hotspot, pppoe]);
@@ -200,6 +203,57 @@ function RoutersPage() {
   const [serverIp, setServerIp] = useState<string>("");
      
   const queryClient = useQueryClient();
+  const realtimeChannelRef = useRef<any | null>(null);
+
+  // cleanup realtime channel on unmount
+  useEffect(() => {
+    return () => {
+      if (realtimeChannelRef.current) {
+        try { supabase.removeChannel(realtimeChannelRef.current); } catch {};
+        realtimeChannelRef.current = null;
+      }
+    };
+  }, []);
+
+  // Fetch live interfaces from Edge Function when in Step 3 and router is online
+  const interfacesQuery = useQuery({
+    queryKey: ["router-interfaces", routerId],
+    queryFn: async () => {
+      if (!routerId) throw new Error("Missing routerId");
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) { throw new Error("Not authenticated"); }
+      const res = await fetch(`/functions/v1/get-router-interfaces`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ routerId }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || `Failed to fetch interfaces (${res.status})`);
+      }
+      return res.json();
+    },
+    enabled: !!routerId && routerOnline === true,
+    staleTime: 10_000,
+    cacheTime: 30_000,
+  });
+
+  // When interfaces arrive, suggest uplink (highest traffic) and default bridge ports
+  useEffect(() => {
+    if (!interfacesQuery.data || !interfacesQuery.data.interfaces) return;
+    const ifs: Array<any> = interfacesQuery.data.interfaces;
+    // choose interface with max (rx+tx)
+    let best: any = null;
+    for (const it of ifs) {
+      const score = (Number(it.rx) || 0) + (Number(it.tx) || 0);
+      if (!best || score > best.score) best = { name: it.name, score };
+    }
+    if (best && !uplinkInterface) setUplinkInterface(best.name);
+    // default bridgePorts to include ether2 if present and not already set
+    const hasEther2 = ifs.some((i) => i.name === 'ether2');
+    if (hasEther2 && (!bridgePorts || bridgePorts.length === 0)) setBridgePorts(['ether2']);
+  }, [interfacesQuery.data]);
 
   const tenantQuery = useQuery({
     queryKey: ["tenant-id", user?.id],
@@ -382,12 +436,25 @@ function RoutersPage() {
       const provSlug = `${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`;
       const subnet = customSubnet ? subnetValue : "172.31.0.0/16";
 
+      // client-side validation: uplink must not be included in bridge_ports
+      if (uplinkInterface && bridgePorts.includes(uplinkInterface)) {
+        toast.error("Selected uplink must not be joined to the bridge");
+        setStep(3);
+        return;
+      }
+
       // 1. Save router config to DB
       addLog("Saving router configuration...", "info");
       const { error: updateErr } = await supabase.from("routers").update({
         services: selectedServices,
-        bridge_port: bridgePort,
+        // Backwards compatibility: single bridge_port (first in array)
+        bridge_port: bridgePorts && bridgePorts.length ? bridgePorts[0] : bridgePort,
+        // New fields
+        bridge_ports: bridgePorts,
+        uplink_interface: uplinkInterface,
         subnet,
+        // mode column: pppoe, hotspot, both
+        mode: (pppoe && hotspot) ? 'both' : (pppoe ? 'pppoe' : (hotspot ? 'hotspot' : null)),
         provisioning_identity: identity.trim(),
         provisioning_slug: provSlug,
       } as any).eq("id", routerId);
@@ -481,16 +548,127 @@ function RoutersPage() {
         addLog("Router is offline — run the provisioning script in Winbox to activate", "warn");
       }
 
-      // 7. Summary
+      // 7. Summary (persisted locally, provisioning worker will perform router-facing changes)
       addLog(`Bridge: ${bridgePort} → ${provisioningTemplate.bridgeName}`, "success");
       addLog(`Subnet: ${subnet}`, "success");
       addLog(`Auto-update scheduler: daily at 00:00`, "success");
-      addLog("Router is fully configured and ready for subscribers", "success");
+      addLog("Router is fully configured and ready for subscribers — starting apply step", "info");
 
       queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
-      setApplyDone(true);
+
+      // Subscribe to provision_logs and routers updates for live logs/status
+      try {
+        if (realtimeChannelRef.current) {
+          try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
+          realtimeChannelRef.current = null;
+        }
+
+        const channel = supabase.channel(`provision-${routerId}`)
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'provision_logs', filter: `router_id=eq.${routerId}` }, (payload) => {
+            const row = (payload as any).new;
+            if (!row) return;
+            addLog(row.message || row.stage || 'log', row.success ? 'success' : 'error');
+          })
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'routers', filter: `id=eq.${routerId}` }, (payload) => {
+            const row = (payload as any).new;
+            if (!row) return;
+            if (row.status === 'active') {
+              addLog('Router marked active', 'success');
+              setApplyDone(true);
+            }
+            if (row.status === 'failed') {
+              addLog('Router provisioning failed', 'error');
+              setApplyDone(true);
+            }
+          })
+          .subscribe();
+
+        realtimeChannelRef.current = channel;
+
+        // Invoke Edge Function to apply router config
+        addLog('Invoking apply-router-config...', 'info');
+        const { data } = await supabase.auth.getSession();
+        const accessToken = data?.session?.access_token ?? data?.access_token ?? null;
+        const res = await fetch('/functions/v1/apply-router-config', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', Authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify({ routerId }),
+        });
+        if (!res.ok) {
+          const txt = await res.text();
+          addLog(`Apply function returned error: ${txt}`, 'error');
+          setApplyDone(true);
+          // Unsubscribe channel
+          try { supabase.removeChannel(realtimeChannelRef.current); } catch {};
+          realtimeChannelRef.current = null;
+        } else {
+          addLog('Apply started — streaming logs will appear below', 'info');
+          // Do not set applyDone here — wait for realtime status update
+        }
+      } catch (err: any) {
+        addLog(`Error starting apply: ${err?.message || String(err)}`, 'error');
+        setApplyDone(true);
+      }
     } catch (err: any) {
       addLog(`Error: ${err.message || "Configuration failed"}`, "error");
+      setApplyDone(true);
+    }
+  }
+
+  async function reInvokeApply() {
+    if (!routerId) return;
+    setApplyDone(false);
+    setLogLines([]);
+    // subscribe and call apply function similar to handleApply's final step
+    try {
+      if (realtimeChannelRef.current) {
+        try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
+        realtimeChannelRef.current = null;
+      }
+      const channel = supabase.channel(`provision-${routerId}`)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'provision_logs', filter: `router_id=eq.${routerId}` }, (payload) => {
+          const row = (payload as any).new;
+          if (!row) return;
+          const level = row.success ? 'success' : 'error';
+          const icon = level === 'success' ? '✓' : '✕';
+          const ts = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          setLogLines((prev) => [...prev, { ts, level: level as any, icon, message: row.message || row.stage || 'log' }]);
+        })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'routers', filter: `id=eq.${routerId}` }, (payload) => {
+          const row = (payload as any).new;
+          if (!row) return;
+          if (row.status === 'active') {
+            setLogLines((prev) => [...prev, { ts: new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }), level: 'success', icon: '✓', message: 'Router marked active' }]);
+            setApplyDone(true);
+          }
+          if (row.status === 'failed') {
+            setLogLines((prev) => [...prev, { ts: new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }), level: 'error', icon: '✕', message: 'Router provisioning failed' }]);
+            setApplyDone(true);
+          }
+        })
+        .subscribe();
+
+      realtimeChannelRef.current = channel;
+
+      addLog('Invoking apply-router-config (retry)...', 'info');
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data?.session?.access_token ?? data?.access_token ?? null;
+      const res = await fetch('/functions/v1/apply-router-config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ routerId }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        addLog(`Apply function returned error: ${txt}`, 'error');
+        setApplyDone(true);
+        try { supabase.removeChannel(realtimeChannelRef.current); } catch {};
+        realtimeChannelRef.current = null;
+      } else {
+        addLog('Apply started — streaming logs will appear below', 'info');
+      }
+    } catch (err: any) {
+      addLog(`Retry start failed: ${err?.message || String(err)}`, 'error');
       setApplyDone(true);
     }
   }
@@ -1362,22 +1540,67 @@ function RoutersPage() {
               </div>
 
               <div className="space-y-2">
-                <EtherOption
-                  name="ether1"
-                  tags={[{ label: "UPLINK / WAN", color: "bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400" }]}
-                  description="Leave unticked — this is the internet feed"
-                  selected={bridgePort === "ether1"}
-                  onSelect={() => setBridgePort("ether1")}
-                  highlighted={false}
-                />
-                <EtherOption
-                  name="ether2"
-                  tags={[]}
-                  description={`Add to ${bridgeName}`}
-                  selected={bridgePort === "ether2"}
-                  onSelect={() => setBridgePort("ether2")}
-                  highlighted={bridgePort === "ether2"}
-                />
+                {/* If live interfaces are available, render them, otherwise fall back to ether1/ether2 */}
+                {interfacesQuery.isSuccess && interfacesQuery.data?.interfaces?.length ? (
+                  interfacesQuery.data.interfaces.map((it: any) => (
+                    <div key={it.name} className="flex items-center gap-3">
+                      <div className="flex items-start gap-3 w-full">
+                        {/* Uplink radio */}
+                        <label className="flex items-center gap-3 cursor-pointer w-full">
+                          <input
+                            type="radio"
+                            name="uplink"
+                            className="accent-primary w-4 h-4"
+                            checked={uplinkInterface === it.name}
+                            onChange={() => setUplinkInterface(it.name)}
+                          />
+                          <div className="flex-1">
+                            <div className="flex items-center justify-between">
+                              <div className="font-semibold">{it.name}</div>
+                              <div className="text-xs text-muted-foreground">{it.link ? 'up' : 'down'}</div>
+                            </div>
+                            <div className="text-xs text-muted-foreground">Rx: {Number(it.rx).toLocaleString()} • Tx: {Number(it.tx).toLocaleString()}</div>
+                          </div>
+                        </label>
+                        {/* Bridge checkbox */}
+                        <label className="flex items-center gap-2 ml-4">
+                          <input
+                            type="checkbox"
+                            checked={bridgePorts.includes(it.name)}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setBridgePorts((prev) => {
+                                if (checked) return Array.from(new Set([...prev, it.name]));
+                                return prev.filter((p) => p !== it.name);
+                              });
+                            }}
+                            className="accent-primary w-4 h-4"
+                          />
+                          <span className="text-xs text-muted-foreground">Join bridge</span>
+                        </label>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <>
+                    <EtherOption
+                      name="ether1"
+                      tags={[{ label: "UPLINK / WAN", color: "bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400" }]}
+                      description="Leave unticked — this is the internet feed"
+                      selected={bridgePort === "ether1"}
+                      onSelect={() => setBridgePort("ether1")}
+                      highlighted={false}
+                    />
+                    <EtherOption
+                      name="ether2"
+                      tags={[]}
+                      description={`Add to ${bridgeName}`}
+                      selected={bridgePort === "ether2"}
+                      onSelect={() => setBridgePort("ether2")}
+                      highlighted={bridgePort === "ether2"}
+                    />
+                  </>
+                )}
               </div>
             </section>
 
@@ -1511,13 +1734,32 @@ function RoutersPage() {
                 <ChevronLeft className="w-4 h-4" />
                 Back
               </button>
-              <button
-                onClick={() => { setView("landing"); setStep(1); setLogLines([]); setApplyDone(false); setIdentity(""); setRouterId(null); }}
-                disabled={!applyDone}
-                className="rounded-full bg-success hover:bg-success/90 text-success-foreground px-5 sm:px-6 py-2.5 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {applyDone ? "✓ Done" : "Configuring..."}
-              </button>
+
+              {/* If apply finished with errors, show Retry */}
+              {applyDone && logLines.some(l => l.level === 'error') ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => reInvokeApply()}
+                    className="rounded-full bg-yellow-500 hover:bg-yellow-600 text-white px-4 sm:px-5 py-2.5 text-sm font-semibold transition-colors"
+                  >
+                    Retry from this step
+                  </button>
+                  <button
+                    onClick={() => { setView("landing"); setStep(1); setLogLines([]); setApplyDone(false); setIdentity(""); setRouterId(null); }}
+                    className="rounded-full bg-success hover:bg-success/90 text-success-foreground px-5 sm:px-6 py-2.5 text-sm font-semibold transition-colors disabled:opacity-50"
+                  >
+                    Close
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setView("landing"); setStep(1); setLogLines([]); setApplyDone(false); setIdentity(""); setRouterId(null); }}
+                  disabled={!applyDone}
+                  className="rounded-full bg-success hover:bg-success/90 text-success-foreground px-5 sm:px-6 py-2.5 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {applyDone ? "✓ Done" : "Configuring..."}
+                </button>
+              )}
             </>
           ) : step === 1 ? (
             <>
@@ -1578,3 +1820,6 @@ function RoutersPage() {
     </div>
   );
 }
+
+
+
