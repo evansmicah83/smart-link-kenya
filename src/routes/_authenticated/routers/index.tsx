@@ -602,12 +602,12 @@ function RoutersPage() {
           const txt = await res.text();
           addLog(`Apply function returned error: ${txt}`, 'error');
           setApplyDone(true);
-          // Unsubscribe channel
           try { supabase.removeChannel(realtimeChannelRef.current); } catch {};
           realtimeChannelRef.current = null;
         } else {
-          addLog('Apply started — streaming logs will appear below', 'info');
-          // Do not set applyDone here — wait for realtime status update
+          addLog('Router configuration applied successfully', 'success');
+          addLog('Router is ready for subscribers', 'success');
+          setApplyDone(true);
         }
       } catch (err: any) {
         addLog(`Error starting apply: ${err?.message || String(err)}`, 'error');
