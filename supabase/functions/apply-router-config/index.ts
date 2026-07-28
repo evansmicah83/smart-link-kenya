@@ -69,16 +69,21 @@ async function doWork(routerId: string, userId: string) {
   }).eq("router_id", routerId);
   await log("nas", `NAS identifier set to "${router.provisioning_identity || router.name}"`, true);
 
-  // 3. Push live config to router
-  const host = router.connection_string || router.ip_address;
+  // 3. Push live config to router via REST API
+  // public_ip is captured by provision-callback from the router's outbound request IP
+  const host = (router as any).public_ip || router.connection_string || router.ip_address;
   const apiPort = router.api_port ?? 8728;
   const apiUser = router.api_username;
   const apiPass = router.api_password;
   let routerApiOk = false;
 
-  if (host && apiUser && apiPass) {
+  if (!host || !apiUser || !apiPass) {
+    await log("api_check", `No IP/credentials — host=${host || "none"} user=${apiUser || "none"} — re-run provisioning script`, false);
+  } else {
     const restBase = `http://${host}:${apiPort}/rest`;
     const basicAuth = "Basic " + btoa(`${apiUser}:${apiPass}`);
+
+    await log("api_check", `Connecting to ${host}:${apiPort} as "${apiUser}"...`, true);
 
     const ping = await routerExec(restBase, basicAuth, "/system/identity", "GET");
     if (!ping.ok) {
@@ -120,7 +125,7 @@ async function doWork(routerId: string, userId: string) {
         await log("radius", radRes.ok ? `RADIUS configured → ${radiusHost}:${radiusAuthPort}` : `RADIUS failed: ${radRes.error}`, radRes.ok);
         await routerExec(restBase, basicAuth, "/radius/incoming/set", "POST", { accept: "yes", port: "3799" });
       } else {
-        await log("radius", "No RADIUS host — skipped (will apply on next heartbeat)", false);
+        await log("radius", "No RADIUS host in DB yet — skipped", false);
       }
 
       // Hotspot profile
@@ -133,9 +138,9 @@ async function doWork(routerId: string, userId: string) {
             "login-page": portalUrl,
             ...(radiusHost ? { "use-radius": "yes", accounting: "yes" } : {}),
           });
-          await log("hotspot_profile", hsRes.ok ? "Hotspot profile updated" : `Hotspot profile failed: ${hsRes.error}`, hsRes.ok);
+          await log("hotspot_profile", hsRes.ok ? "Hotspot profile login-page updated" : `Hotspot profile failed: ${hsRes.error}`, hsRes.ok);
         } else {
-          await log("hotspot_profile", "Hotspot profile not found — run provisioning script first", false);
+          await log("hotspot_profile", "Hotspot profile not found on router", false);
         }
       }
 
@@ -147,7 +152,7 @@ async function doWork(routerId: string, userId: string) {
           const pppRes = await routerExec(restBase, basicAuth, `/ppp/profile/${pid}`, "PATCH", { "use-radius": "yes" });
           await log("pppoe_profile", pppRes.ok ? "PPPoE profile updated to use RADIUS" : `PPPoE profile failed: ${pppRes.error}`, pppRes.ok);
         } else {
-          await log("pppoe_profile", "PPPoE profile not found — run provisioning script first", false);
+          await log("pppoe_profile", "PPPoE profile not found on router", false);
         }
       }
 
@@ -161,11 +166,9 @@ async function doWork(routerId: string, userId: string) {
         });
         await log("heartbeat", schedRes.ok ? "Heartbeat scheduler updated" : `Heartbeat failed: ${schedRes.error}`, schedRes.ok);
       } else {
-        await log("heartbeat", "Heartbeat scheduler not found — run provisioning script first", false);
+        await log("heartbeat", "Heartbeat scheduler not found on router", false);
       }
     }
-  } else {
-    await log("api_check", `Router has no IP/credentials stored — DB config saved, live push skipped`, false);
   }
 
   // 4. Mark router status
@@ -175,7 +178,7 @@ async function doWork(routerId: string, userId: string) {
     provisioned_at: new Date().toISOString(),
   }).eq("id", routerId);
 
-  // 5. Complete log — triggers applyDone on UI
+  // 5. Complete log — triggers applyDone on UI via realtime
   const summary = `services: ${(router.services || []).join(", ") || "none"} | RADIUS: ${realRadius?.host || "pending"} | API: ${routerApiOk ? "connected" : "unreachable"}`;
   await log("complete", `Apply complete — ${summary}`, routerApiOk);
 }
@@ -200,10 +203,13 @@ serve(async (req: Request) => {
     const { routerId } = body ?? {};
     if (!routerId) return new Response(JSON.stringify({ error: "Missing routerId" }), { status: 400, headers: { ...CORS, "content-type": "application/json" } });
 
-    // Return 200 immediately — doWork runs fully async after response is sent
-    (globalThis as any).EdgeRuntime?.waitUntil(doWork(routerId, userId));
-    // Fallback for non-EdgeRuntime envs: fire and forget
-    doWork(routerId, userId).catch(() => {});
+    // Return 200 immediately — doWork runs fully async
+    const work = doWork(routerId, userId);
+    if ((globalThis as any).EdgeRuntime?.waitUntil) {
+      (globalThis as any).EdgeRuntime.waitUntil(work);
+    } else {
+      work.catch(() => {});
+    }
 
     return new Response(JSON.stringify({ ok: true, async: true }), {
       status: 200,

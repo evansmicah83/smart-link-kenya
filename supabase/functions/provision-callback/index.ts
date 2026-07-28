@@ -14,11 +14,18 @@ serve(async (req: Request) => {
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { global: { fetch } });
 
+    // Capture the router's public IP from the request so apply-router-config can reach it
+    const publicIp =
+      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      req.headers.get("x-real-ip") ||
+      null;
+
     await supabase.from("routers").update({
       status: "online",
       last_seen: new Date().toISOString(),
       provision_token: null,
       provision_token_expires_at: null,
+      ...(publicIp ? { public_ip: publicIp, connection_string: publicIp } : {}),
     }).eq("id", routerId);
 
     await supabase.from("provision_logs").insert([{
