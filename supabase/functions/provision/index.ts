@@ -23,7 +23,7 @@ serve(async (req: Request) => {
 
     const { data: router, error: selErr } = await supabase
       .from("routers")
-      .select("id, name, bridge_name, provision_token_expires_at, status")
+      .select("id, name, bridge_port, provision_token_expires_at, status")
       .eq("provision_token", token)
       .maybeSingle();
 
@@ -32,7 +32,7 @@ serve(async (req: Request) => {
     }
 
     const expires = router.provision_token_expires_at ? new Date(router.provision_token_expires_at) : null;
-    if (!expires || expires < new Date() || router.status === 'active') {
+    if (!expires || expires < new Date()) {
       return new Response(':log warning "SmartlinkNet: provisioning link expired or invalid"', { status: 410, headers: { "content-type": "text/plain" } });
     }
 
@@ -47,8 +47,9 @@ serve(async (req: Request) => {
     const scriptLines = [];
     // set identity (escape double quotes)
     const safeName = (router.name || '').replace(/"/g, '\\"');
+    const bridgeName = `bridge-${safeName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
     scriptLines.push(`/system identity set name="${safeName}"`);
-    scriptLines.push(`/interface bridge add name=${router.bridge_name}`);
+    scriptLines.push(`/interface bridge add name=${bridgeName}`);
     scriptLines.push(`/tool fetch mode=https url="${callbackUrl}" keep-result=no`);
     scriptLines.push(`:log info "SmartlinkNet: identity and bridge created"`);
 

@@ -68,7 +68,7 @@ serve(async (req: Request) => {
     const extra = crypto.getRandomValues(new Uint8Array(16));
     const extraHex = Array.from(extra).map((b) => b.toString(16).padStart(2, "0")).join("");
     const provisionToken = crypto.randomUUID() + extraHex;
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
     const { error: updErr } = await supabase
       .from("routers")
