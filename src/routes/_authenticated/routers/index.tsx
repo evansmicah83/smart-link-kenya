@@ -605,8 +605,8 @@ function RoutersPage() {
           try { supabase.removeChannel(realtimeChannelRef.current); } catch {};
           realtimeChannelRef.current = null;
         } else {
-          addLog('Router configuration applied successfully', 'success');
-          addLog('Router is ready for subscribers', 'success');
+          addLog('Services, NAS and RADIUS records saved to platform', 'success');
+          addLog('Router is active — subscribers can now be added', 'success');
           setApplyDone(true);
         }
       } catch (err: any) {
@@ -1713,8 +1713,8 @@ function RoutersPage() {
                   </>
                 ) : (
                   <>
-                    <p className="text-sm text-success font-medium">✓ Device provisioning complete</p>
-                    <p className="text-xs text-success/70 mt-1">You can now add subscribers and manage services on this router.</p>
+                    <p className="text-sm text-success font-medium">✓ Router fully provisioned and active</p>
+                    <p className="text-xs text-success/70 mt-1">Bridge, DHCP, NAT, RADIUS and services were configured on the router when the script ran. Subscribers can now be added.</p>
                   </>
                 )}
               </div>
