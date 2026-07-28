@@ -281,26 +281,9 @@ function RoutersPage() {
     enabled: !!tenantId,
   });
 
-  // Real live session count — queries hotspot_sessions + pppoe_sessions if they exist
-  const liveSessionsQuery = useQuery({
-    queryKey: ["live-sessions", tenantId],
-    queryFn: async () => {
-      if (!tenantId) return 0;
-      const [hs, ppp] = await Promise.allSettled([
-        supabase.from("hotspot_sessions" as any).select("id", { count: "exact", head: true })
-          .eq("tenant_id", tenantId).eq("status", "active"),
-        supabase.from("pppoe_sessions" as any).select("id", { count: "exact", head: true })
-          .eq("tenant_id", tenantId).eq("status", "active"),
-      ]);
-      const hsCount = hs.status === "fulfilled" && !hs.value.error ? (hs.value.count ?? 0) : 0;
-      const pppCount = ppp.status === "fulfilled" && !ppp.value.error ? (ppp.value.count ?? 0) : 0;
-      return hsCount + pppCount;
-    },
-    enabled: !!tenantId,
-    refetchInterval: 30_000,
-    retry: false,
-  });
-  const liveSessions = liveSessionsQuery.data ?? 0;
+  // Live sessions — derived from active_sessions view once it exists.
+  // Kept as 0 until the sessions tables are migrated in.
+  const liveSessions = 0;
 
   // Realtime subscription — any router UPDATE for this tenant pushes instantly into the cache
   const routersRealtimeRef = useRef<any | null>(null);
