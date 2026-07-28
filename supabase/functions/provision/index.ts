@@ -3,6 +3,7 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const APP_URL = Deno.env.get("APP_URL") || "https://smart-link-kenya.vercel.app";
 
 serve(async (req: Request) => {
   if (req.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
@@ -15,7 +16,7 @@ serve(async (req: Request) => {
 
   const { data: router, error } = await supabase
     .from("routers")
-    .select("id, name, bridge_port, bridge_ports, services, mode, subnet, provision_token_expires_at")
+    .select("id, name, tenant_id, bridge_port, bridge_ports, services, mode, subnet, provision_token_expires_at")
     .eq("provision_token", token)
     .maybeSingle();
 
@@ -33,17 +34,37 @@ serve(async (req: Request) => {
 
   await supabase.from("routers").update({ status: "provisioning" }).eq("id", router.id);
 
-  const safeName = (router.name || "MikroTik").replace(/"/g, '\\"');
-  const bridgeName = `bridge-${safeName.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
-  const subnet = router.subnet || "172.31.0.0/16";
-  const subnetParts = subnet.split("/");
-  const subnetAddr = subnetParts[0];
-  const subnetMask = subnetParts[1] || "16";
-  // Gateway = first usable IP e.g. 172.31.0.1
-  const gatewayIp = subnetAddr.replace(/(\d+)$/, (m) => String(parseInt(m) + 1));
-  const bridgeAddress = `${gatewayIp}/${subnetMask}`;
+  // Get tenant slug for portal URL
+  const { data: tenant } = await supabase
+    .from("tenants")
+    .select("slug, name")
+    .eq("id", router.tenant_id)
+    .maybeSingle();
 
-  // Which ports to add to bridge
+  // Get real RADIUS server for this tenant
+  const { data: radiusServer } = await supabase
+    .from("radius_servers")
+    .select("host, auth_port, acct_port, shared_secret")
+    .eq("tenant_id", router.tenant_id)
+    .eq("is_active", true)
+    .order("priority", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  const ispSlug = tenant?.slug ?? router.tenant_id;
+  const safeName = (router.name || "MikroTik").replace(/"/g, '\\"');
+  const companySlug = ispSlug.replace(/[^a-z0-9]/g, "-").toLowerCase();
+  const bridgeName = `${companySlug}-bridge`;
+
+  const subnet = router.subnet || "172.31.0.0/16";
+  const [networkAddr, prefixLen] = subnet.split("/");
+  const parts = networkAddr.split(".").map(Number);
+  parts[3] = 1;
+  const gatewayIp = parts.join(".");
+  const bridgeAddress = `${gatewayIp}/${prefixLen}`;
+  const poolStart = `${parts[0]}.${parts[1]}.${parts[2]}.10`;
+  const poolEnd = `${parts[0]}.${parts[1]}.${parts[2]}.254`;
+
   const bridgePorts: string[] = router.bridge_ports?.length
     ? router.bridge_ports
     : [router.bridge_port || "ether2"];
@@ -52,59 +73,98 @@ serve(async (req: Request) => {
   const hasHotspot = services.includes("hotspot");
   const hasPppoe = services.includes("pppoe");
 
+  const radiusHost = (radiusServer?.host && radiusServer.host !== "pending") ? radiusServer.host : null;
+  const radiusSecret = radiusServer?.shared_secret || "SmartLinkNet-Public-Fallback";
+  const radiusAuthPort = radiusServer?.auth_port || 1812;
+  const radiusAcctPort = radiusServer?.acct_port || 1813;
+
+  const portalLoginPage = `${APP_URL}/portal?isp=${ispSlug}&mac=\$(mac)&ip=\$(ip)&url=\$(link-orig)&dst=\$(dst-ip)`;
   const callbackUrl = `https://${new URL(SUPABASE_URL).host}/functions/v1/provision-callback?router_id=${router.id}&stage=complete`;
 
-  const lines: string[] = [];
+  const lines: string[] = [
+    `# SmartLinkNet — Auto-provisioning script`,
+    `# Router: ${safeName} | Tenant: ${tenant?.name ?? ispSlug}`,
+    `# Generated: ${new Date().toISOString()}`,
+    ``,
+    `# 1. Identity`,
+    `/system identity set name="${safeName}"`,
+    ``,
+    `# 2. Bridge`,
+    `/interface bridge add name=${bridgeName} protocol-mode=rstp comment="SmartLinkNet"`,
+  ];
 
-  // 1. Identity
-  lines.push(`/system identity set name="${safeName}"`);
-
-  // 2. Bridge
-  lines.push(`/interface bridge add name=${bridgeName} protocol-mode=rstp`);
-
-  // 3. Add ports to bridge
+  // Bridge ports
   for (const port of bridgePorts) {
     lines.push(`/interface bridge port add bridge=${bridgeName} interface=${port}`);
   }
 
-  // 4. Assign gateway IP to bridge
-  lines.push(`/ip address add address=${bridgeAddress} interface=${bridgeName}`);
+  lines.push(
+    ``,
+    `# 3. Gateway IP on bridge`,
+    `/ip address add address=${bridgeAddress} interface=${bridgeName} comment="SmartLinkNet gateway"`,
+    ``,
+    `# 4. IP Pool`,
+    `/ip pool add name=${companySlug}-pool ranges=${poolStart}-${poolEnd}`,
+    ``,
+    `# 5. DHCP Server`,
+    `/ip dhcp-server add name=${companySlug}-dhcp interface=${bridgeName} address-pool=${companySlug}-pool lease-time=1h disabled=no`,
+    `/ip dhcp-server network add address=${subnet} gateway=${gatewayIp} dns-server=8.8.8.8,8.8.4.4`,
+    ``,
+    `# 6. NAT`,
+    `/ip firewall nat add chain=srcnat out-interface-list=WAN action=masquerade comment="SmartLinkNet NAT"`,
+    ``,
+    `# 7. DNS`,
+    `/ip dns set allow-remote-requests=yes servers=8.8.8.8,8.8.4.4`,
+  );
 
-  // 5. DHCP pool for hotspot/local clients
-  const poolName = `${bridgeName}-pool`;
-  const poolStart = subnetAddr.replace(/(\d+\.\d+)\.(\d+)\.(\d+)/, (_, a, b, c) => `${a}.${b}.10`);
-  const poolEnd = subnetAddr.replace(/(\d+\.\d+)\.(\d+)\.(\d+)/, (_, a, b, c) => `${a}.${b}.254`);
-  lines.push(`/ip pool add name=${poolName} ranges=${poolStart}-${poolEnd}`);
-
-  // 6. DHCP server on bridge
-  lines.push(`/ip dhcp-server add name=dhcp-${bridgeName} interface=${bridgeName} address-pool=${poolName} disabled=no`);
-  lines.push(`/ip dhcp-server network add address=${subnet} gateway=${gatewayIp} dns-server=8.8.8.8,8.8.4.4`);
-
-  // 7. NAT masquerade
-  lines.push(`/ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade`);
-
-  // 8. RADIUS server (SmartLinkNet public fallback)
-  const radiusSecret = "SmartLinkNet-Public-Fallback";
-  lines.push(`/radius remove [find]`);
-  lines.push(`/radius add service=hotspot,pppoe address=${new URL(SUPABASE_URL).hostname} secret=${radiusSecret} authentication-port=1812 accounting-port=1813 timeout=3000ms`);
-
-  // 9. PPPoE server
-  if (hasPppoe) {
-    lines.push(`/ppp profile add name=sln-pppoe use-radius=yes`);
-    lines.push(`/interface pppoe-server server add service-name=pppoe interface=${bridgeName} default-profile=sln-pppoe disabled=no`);
+  // RADIUS — only add if we have a real host
+  if (radiusHost) {
+    lines.push(
+      ``,
+      `# 8. RADIUS`,
+      `/radius remove [find comment="SmartLinkNet"]`,
+      `/radius add service=${hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp"} address=${radiusHost} secret=${radiusSecret} authentication-port=${radiusAuthPort} accounting-port=${radiusAcctPort} timeout=3000ms comment="SmartLinkNet"`,
+    );
   }
 
-  // 10. Hotspot
+  // Hotspot
   if (hasHotspot) {
-    lines.push(`/ip hotspot profile add name=sln-hotspot hotspot-address=${gatewayIp} use-radius=yes`);
-    lines.push(`/ip hotspot add name=hotspot1 interface=${bridgeName} address-pool=${poolName} profile=sln-hotspot disabled=no`);
+    lines.push(
+      ``,
+      `# 9. Hotspot`,
+      `/ip hotspot profile add name=${companySlug}-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d ${radiusHost ? "use-radius=yes accounting=yes" : ""} login-page="${portalLoginPage}"`,
+      `/ip hotspot add name=${companySlug}-hotspot interface=${bridgeName} address-pool=${companySlug}-pool profile=${companySlug}-hs-profile disabled=no`,
+      ``,
+      `# Walled Garden — allow portal before login`,
+      `/ip hotspot walled-garden add dst-host=smart-link-kenya.vercel.app comment="SmartLinkNet portal"`,
+      `/ip hotspot walled-garden add dst-host=*.supabase.co comment="Supabase"`,
+      `/ip hotspot walled-garden add dst-host=*.safaricom.com comment="M-Pesa"`,
+      `/ip hotspot walled-garden add dst-host=mpesa.safaricom.co.ke comment="M-Pesa STK"`,
+      `/ip hotspot walled-garden ip add dst-address=0.0.0.0/0 protocol=tcp dst-port=443 comment="HTTPS"`,
+    );
   }
 
-  // 11. Callback to mark router online
-  lines.push(`/tool fetch mode=https url="${callbackUrl}" keep-result=no`);
-  lines.push(`:log info "SmartlinkNet: provisioning complete"`);
+  // PPPoE
+  if (hasPppoe) {
+    lines.push(
+      ``,
+      `# 10. PPPoE Server`,
+      `/ppp profile add name=${companySlug}-pppoe ${radiusHost ? "use-radius=yes" : ""} comment="SmartLinkNet"`,
+      `/interface pppoe-server server add name=${companySlug}-pppoe interface=${bridgeName} default-profile=${companySlug}-pppoe disabled=no`,
+    );
+  }
+
+  // Heartbeat scheduler
+  lines.push(
+    ``,
+    `# 11. Heartbeat`,
+    `/system scheduler add name=sln-heartbeat interval=5m on-event=":do { /tool fetch mode=https url=\\"${APP_URL}/api/heartbeat?router=${router.id}\\" keep-result=no } on-error={}" comment="SmartLinkNet"`,
+    ``,
+    `# 12. Report back`,
+    `/tool fetch mode=https url="${callbackUrl}" keep-result=no`,
+    `:log info "SmartLinkNet: provisioning complete for ${safeName}"`,
+  );
 
   const script = lines.join("\n");
-
   return new Response(script, { status: 200, headers: { "content-type": "text/plain" } });
 });
