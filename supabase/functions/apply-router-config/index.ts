@@ -27,11 +27,12 @@ async function routerExec(
       method,
       headers: { Authorization: auth, "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(4000), // 4s per call — keeps total well under edge fn limit
     });
     const text = await res.text();
-    const data = text ? JSON.parse(text).catch?.(() => text) ?? text : undefined;
-    return res.ok ? { ok: true, data } : { ok: false, error: `HTTP ${res.status}: ${text}` };
+    let data: unknown;
+    try { data = text ? JSON.parse(text) : undefined; } catch { data = text; }
+    return res.ok ? { ok: true, data } : { ok: false, error: `HTTP ${res.status}: ${text.slice(0, 200)}` };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? String(e) };
   }
@@ -64,13 +65,19 @@ serve(async (req: Request) => {
     const { data: router, error: selErr } = await supabase.from("routers").select("*").eq("id", routerId).eq("tenant_id", profile.tenant_id).maybeSingle();
     if (selErr || !router) return new Response(JSON.stringify({ error: "Router not found" }), { status: 404, headers: { ...CORS, "content-type": "application/json" } });
 
+    // Return 200 immediately so the client doesn't hang — work continues async
+    const responsePromise = new Response(JSON.stringify({ ok: true, async: true }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
+
     const tenantId = profile.tenant_id;
-    const logs: LogEntry[] = [];
-    const log = (stage: string, message: string, success: boolean) => logs.push({ stage, message, success });
+    const supabaseClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { global: { fetch } });
+
+    // Insert each log immediately so realtime fires even if function times out later
+    const log = async (stage: string, message: string, success: boolean) => {
+      await supabaseClient.from("provision_logs").insert({ router_id: routerId, stage, message, success }).catch(() => {});
+    };
 
     // ── 1. Resolve RADIUS ────────────────────────────────────────────────────
-    const { data: realRadius } = await supabase
-      .from("radius_servers")
+    const { data: realRadius } = await supabase.from("radius_servers")
       .select("id, host, auth_port, acct_port, shared_secret")
       .eq("tenant_id", tenantId)
       .eq("is_active", true)
@@ -92,7 +99,7 @@ serve(async (req: Request) => {
       is_active: true,
       updated_at: new Date().toISOString(),
     }).eq("router_id", routerId);
-    log("nas", `NAS identifier set to "${router.provisioning_identity || router.name}"`, true);
+    await log("nas", `NAS identifier set to "${router.provisioning_identity || router.name}"`, true);
 
     // ── 3. Push live config to router via REST API ───────────────────────────
     const host = router.connection_string || router.ip_address;
@@ -109,7 +116,7 @@ serve(async (req: Request) => {
       const ping = await routerExec(restBase, basicAuth, "/system/identity", "GET");
       if (ping.ok) {
         routerApiOk = true;
-        log("api_check", `Router API reachable at ${host}:${apiPort}`, true);
+        await log("api_check", `Router API reachable at ${host}:${apiPort}`, true);
 
         const services: string[] = router.services || [];
         const hasHotspot = services.includes("hotspot");
@@ -126,7 +133,7 @@ serve(async (req: Request) => {
 
         // 3b. Update system identity
         const identityRes = await routerExec(restBase, basicAuth, "/system/identity", "POST", { name: router.provisioning_identity || router.name });
-        log("identity", identityRes.ok ? `Identity set to "${router.provisioning_identity || router.name}"` : `Identity update failed: ${identityRes.error}`, identityRes.ok);
+        await log("identity", identityRes.ok ? `Identity set to "${router.provisioning_identity || router.name}"` : `Identity update failed: ${identityRes.error}`, identityRes.ok);
 
         // 3c. Push RADIUS config if we have a real host
         if (radiusHost) {
@@ -146,12 +153,12 @@ serve(async (req: Request) => {
             timeout: "3000ms",
             comment: "SmartLinkNet",
           });
-          log("radius", radiusRes.ok ? `RADIUS configured → ${radiusHost}:${radiusAuthPort}` : `RADIUS push failed: ${radiusRes.error}`, radiusRes.ok);
+          await log("radius", radiusRes.ok ? `RADIUS configured → ${radiusHost}:${radiusAuthPort}` : `RADIUS push failed: ${radiusRes.error}`, radiusRes.ok);
 
           // 3d. Enable RADIUS incoming (CoA)
           await routerExec(restBase, basicAuth, "/radius/incoming/set", "POST", { accept: "yes", port: "3799" });
         } else {
-          log("radius", "No real RADIUS host available — skipped (will apply on next heartbeat)", false);
+          await log("radius", "No real RADIUS host available — skipped (will apply on next heartbeat)", false);
         }
 
         // 3e. Update hotspot profile login-page URL if hotspot is enabled
@@ -164,9 +171,9 @@ serve(async (req: Request) => {
               "login-page": portalUrl,
               ...(radiusHost ? { "use-radius": "yes", accounting: "yes" } : {}),
             });
-            log("hotspot_profile", hsRes.ok ? "Hotspot profile login-page updated" : `Hotspot profile update failed: ${hsRes.error}`, hsRes.ok);
+            await log("hotspot_profile", hsRes.ok ? "Hotspot profile login-page updated" : `Hotspot profile update failed: ${hsRes.error}`, hsRes.ok);
           } else {
-            log("hotspot_profile", "Hotspot profile not found on router — was script run?", false);
+            await log("hotspot_profile", "Hotspot profile not found on router — was script run?", false);
           }
         }
 
@@ -176,9 +183,9 @@ serve(async (req: Request) => {
           if (pppProfiles.ok && Array.isArray(pppProfiles.data) && pppProfiles.data.length) {
             const profileId = (pppProfiles.data as any[])[0][".id"];
             const pppRes = await routerExec(restBase, basicAuth, `/ppp/profile/${profileId}`, "PATCH", { "use-radius": "yes" });
-            log("pppoe_profile", pppRes.ok ? "PPPoE profile updated to use RADIUS" : `PPPoE profile update failed: ${pppRes.error}`, pppRes.ok);
+            await log("pppoe_profile", pppRes.ok ? "PPPoE profile updated to use RADIUS" : `PPPoE profile update failed: ${pppRes.error}`, pppRes.ok);
           } else {
-            log("pppoe_profile", "PPPoE profile not found on router — was script run?", false);
+            await log("pppoe_profile", "PPPoE profile not found on router — was script run?", false);
           }
         }
 
@@ -190,16 +197,16 @@ serve(async (req: Request) => {
           const schedRes = await routerExec(restBase, basicAuth, `/system/scheduler/${schedId}`, "PATCH", {
             "on-event": `:do { /tool fetch mode=https url="${heartbeatUrl}" keep-result=no } on-error={}`,
           });
-          log("heartbeat", schedRes.ok ? "Heartbeat scheduler updated" : `Heartbeat update failed: ${schedRes.error}`, schedRes.ok);
+          await log("heartbeat", schedRes.ok ? "Heartbeat scheduler updated" : `Heartbeat update failed: ${schedRes.error}`, schedRes.ok);
         } else {
-          log("heartbeat", "Heartbeat scheduler not found — run provisioning script first", false);
+          await log("heartbeat", "Heartbeat scheduler not found — run provisioning script first", false);
         }
 
       } else {
-        log("api_check", `Router API unreachable at ${host}:${apiPort} — ${ping.error}`, false);
+        await log("api_check", `Router API unreachable at ${host}:${apiPort} — ${ping.error}`, false);
       }
     } else {
-      log("api_check", "Router has no IP/credentials stored — skipping live push", false);
+      await log("api_check", "Router has no IP/credentials stored — skipping live push", false);
     }
 
     // ── 4. Mark router active in DB ──────────────────────────────────────────
@@ -209,17 +216,11 @@ serve(async (req: Request) => {
       provisioned_at: new Date().toISOString(),
     }).eq("id", routerId);
 
-    // ── 5. Persist all log entries ────────────────────────────────────────────
-    if (logs.length) {
-      await supabase.from("provision_logs").insert(
-        logs.map((l) => ({ router_id: routerId, stage: l.stage, message: l.message, success: l.success }))
-      );
-    }
-
+    // ── 5. Final summary log — triggers applyDone on the UI via realtime ─────
     const summary = `services: ${(router.services || []).join(", ") || "none"} | RADIUS: ${realRadius?.host || "pending"} | API: ${routerApiOk ? "connected" : "unreachable"}`;
-    await supabase.from("provision_logs").insert([{ router_id: routerId, stage: "complete", message: `Apply complete — ${summary}`, success: true }]);
+    await log("complete", `Apply complete — ${summary}`, true);
 
-    return new Response(JSON.stringify({ ok: true, routerApiOk, logs }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
+    return responsePromise;
   } catch (err) {
     console.error(err);
     return new Response(JSON.stringify({ error: "Internal error" }), { status: 500, headers: { ...CORS, "content-type": "application/json" } });

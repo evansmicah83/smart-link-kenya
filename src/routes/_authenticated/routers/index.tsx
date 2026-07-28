@@ -540,17 +540,22 @@ function RoutersPage() {
         try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
         realtimeChannelRef.current = null;
       }
+      const safetyTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
       const channel = supabase.channel(`provision-${routerId}`)
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "provision_logs", filter: `router_id=eq.${routerId}` }, (payload) => {
           const row = (payload as any).new;
           if (!row) return;
           addLog(row.message || row.stage || "log", row.success ? "success" : "error");
+          if (row.stage === "complete") {
+            if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
+            setApplyDone(true);
+          }
         })
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "routers", filter: `id=eq.${routerId}` }, (payload) => {
           const row = (payload as any).new;
           if (!row) return;
-          if (row.status === "active") { addLog("Router is active — subscribers can now be added", "success"); setApplyDone(true); }
-          if (row.status === "failed") { addLog("Router provisioning failed", "error"); setApplyDone(true); }
+          if (row.status === "active") { addLog("Router is active — subscribers can now be added", "success"); if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current); setApplyDone(true); }
+          if (row.status === "failed") { addLog("Router provisioning failed", "error"); if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current); setApplyDone(true); }
         })
         .subscribe();
       realtimeChannelRef.current = channel;
@@ -559,19 +564,28 @@ function RoutersPage() {
       addLog("Applying configuration to router...", "info");
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token ?? null;
+
+      // Safety timeout — if no realtime event arrives within 45s, mark done
+      const safetyTimer = setTimeout(() => {
+        addLog("Apply timed out — router may be unreachable. Check diagnostics tab.", "warn");
+        setApplyDone(true);
+      }, 45_000);
+      safetyTimerRef.current = safetyTimer;
+
       const res = await fetch(`${SUPABASE_FUNCTIONS}/apply-router-config`, {
         method: "POST",
         headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ routerId }),
       });
       if (!res.ok) {
+        clearTimeout(safetyTimer);
         const txt = await res.text();
         addLog(`Apply failed: ${txt}`, "error");
         setApplyDone(true);
         try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
         realtimeChannelRef.current = null;
       }
-      // logs and done state are driven by realtime subscription above
+      // logs and done state driven by realtime; safetyTimer clears if complete log arrives
     } catch (err: any) {
       const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
       setLogLines((prev) => [...prev, { ts, level: "error", icon: "✕", message: err.message || "Configuration failed" }]);
