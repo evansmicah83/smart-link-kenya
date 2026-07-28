@@ -3,6 +3,7 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -28,7 +29,7 @@ serve(async (req: Request) => {
     if (!token) return new Response(JSON.stringify({ error: 'Missing Authorization token' }), { status: 401, headers: { ...CORS, 'content-type': 'application/json' } });
 
     // Verify user
-    const authHeaders = { Authorization: 'Bearer ' + token };
+    const authHeaders = { Authorization: 'Bearer ' + token, apikey: ANON_KEY };
     const userResp = await fetch(SUPABASE_URL.replace(/\/+$/, '') + '/auth/v1/user', { headers: authHeaders });
     if (!userResp.ok) return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401, headers: { ...CORS, 'content-type': 'application/json' } });
     const userJson = await userResp.json();
