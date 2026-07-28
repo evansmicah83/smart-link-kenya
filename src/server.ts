@@ -61,6 +61,83 @@ async function getRouterProvisionRecord(slug: string) {
   return null;
 }
 
+// Attempt MikroTik REST API verification and credential sync.
+// Returns true if API is reachable with current credentials.
+async function verifyAndSyncRouterApi(router: {
+  id: string;
+  ip_address: string | null;
+  connection_string: string | null;
+  api_port: number | null;
+  api_username: string | null;
+  api_password: string | null;
+  api_username_pending: string | null;
+  api_password_pending: string | null;
+}): Promise<boolean> {
+  const host = router.connection_string || router.ip_address;
+  if (!host || !router.api_username || !router.api_password) return false;
+
+  const port = router.api_port ?? 8728;
+  const makeAuth = (u: string, p: string) => "Basic " + Buffer.from(`${u}:${p}`).toString("base64");
+  const restBase = `http://${host}:${port}/rest`;
+
+  const tryGet = async (auth: string) => {
+    const res = await fetch(`${restBase}/system/identity`, {
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.ok;
+  };
+
+  // If ISP queued new credentials, push them to the router first using current creds
+  if (router.api_username_pending || router.api_password_pending) {
+    const currentAuth = makeAuth(router.api_username, router.api_password);
+    const currentOk = await tryGet(currentAuth).catch(() => false);
+    if (currentOk) {
+      const newUser = router.api_username_pending || router.api_username;
+      const newPass = router.api_password_pending || router.api_password;
+      try {
+        // Find the existing sln-api user on the router and update it
+        const listRes = await fetch(`${restBase}/user?name=${encodeURIComponent(router.api_username)}`, {
+          headers: { Authorization: currentAuth },
+          signal: AbortSignal.timeout(5000),
+        });
+        const users = listRes.ok ? await listRes.json().catch(() => []) : [];
+        if (Array.isArray(users) && users.length) {
+          await fetch(`${restBase}/user/${users[0][".id"]}`, {
+            method: "PATCH",
+            headers: { Authorization: currentAuth, "Content-Type": "application/json" },
+            body: JSON.stringify({ name: newUser, password: newPass }),
+            signal: AbortSignal.timeout(5000),
+          });
+        } else {
+          // User not found — create fresh
+          await fetch(`${restBase}/user`, {
+            method: "POST",
+            headers: { Authorization: currentAuth, "Content-Type": "application/json" },
+            body: JSON.stringify({ name: newUser, password: newPass, group: "full", comment: "SmartLinkNet" }),
+            signal: AbortSignal.timeout(5000),
+          });
+        }
+        // Promote pending to active in DB
+        await supabaseAdmin.from("routers").update({
+          api_username: newUser,
+          api_password: newPass,
+          api_username_pending: null,
+          api_password_pending: null,
+        } as any).eq("id", router.id);
+        // Verify with new creds
+        return await tryGet(makeAuth(newUser, newPass)).catch(() => false);
+      } catch {
+        // Push failed — still verify with current creds
+        return currentOk;
+      }
+    }
+    return false;
+  }
+
+  return tryGet(makeAuth(router.api_username, router.api_password)).catch(() => false);
+}
+
 async function markRouterOnline(slug: string, request: Request) {
   const radiusServerIp: string =
     (typeof process !== "undefined" && (process.env?.SERVER_IP || process.env?.VITE_SERVER_IP)) || "";
@@ -84,6 +161,18 @@ async function markRouterOnline(slug: string, request: Request) {
       tenantId = data[0].tenant_id;
     }
 
+    // Fetch full router row including API credentials and pending changes
+    const { data: routerRow } = await supabaseAdmin
+      .from("routers")
+      .select("id, ip_address, connection_string, api_port, api_username, api_password, api_username_pending, api_password_pending")
+      .eq("id", routerId)
+      .maybeSingle();
+
+    // Verify API connectivity and sync any pending credential changes
+    const apiConnected = routerRow
+      ? await verifyAndSyncRouterApi({ ...routerRow, ip_address: forwardedFor ?? routerRow.ip_address })
+      : false;
+
     await supabaseAdmin
       .from("routers")
       .update({
@@ -91,8 +180,21 @@ async function markRouterOnline(slug: string, request: Request) {
         last_seen: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         ip_address: forwardedFor ?? null,
+        api_connected: apiConnected,
       } as any)
       .eq("id", routerId);
+
+    // Mark any routers for this tenant that haven't been seen in >10min as offline
+    if (tenantId) {
+      const staleThreshold = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      await supabaseAdmin
+        .from("routers")
+        .update({ status: "offline", api_connected: false, updated_at: new Date().toISOString() } as any)
+        .eq("tenant_id", tenantId)
+        .eq("status", "online")
+        .neq("id", routerId)
+        .lt("last_seen", staleThreshold);
+    }
 
     // Auto-upsert NAS device so AAA page reflects real router data
     if (tenantId && routerId) {
@@ -364,13 +466,25 @@ export default {
 
       if (url.pathname.startsWith("/provision/")) {
         const slug = url.pathname.replace("/provision/", "").replace(/\/+$/, "");
+        // Look up the router and redirect to the token-based edge function
+        // so there is only one provisioning code path
+        const record = await getRouterProvisionRecord(normalizeProvisionSlug(slug));
+        if (record?.id) {
+          // Re-issue a fresh provision token and redirect
+          const newToken = crypto.randomUUID();
+          const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+          await supabaseAdmin.from("routers").update({
+            provision_token: newToken,
+            provision_token_expires_at: expiresAt,
+          } as any).eq("id", record.id);
+          const edgeFnUrl = `https://tghaarhofriakwgvqmpm.supabase.co/functions/v1/provision?token=${encodeURIComponent(newToken)}`;
+          return new Response(null, { status: 302, headers: { Location: edgeFnUrl } });
+        }
+        // Fallback: build legacy script if router not found by slug
         const body = await buildProvisionScript(slug, url.origin);
         return new Response(body, {
           status: 200,
-          headers: {
-            "content-type": "text/plain; charset=utf-8",
-            "cache-control": "no-store",
-          },
+          headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
         });
       }
 

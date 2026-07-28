@@ -135,11 +135,13 @@ function CaptivePortal() {
 
       if (data?.status === "completed") {
         clearInterval(pollRef.current);
+        // Activate the subscription
+        await (supabase as any)
+          .from("subscriptions")
+          .update({ status: "active" })
+          .eq("payment_id", paymentId);
         setSuccessMsg("Payment confirmed! You are now connected.");
         setPage("success");
-        // Standard MikroTik captive portal login:
-        // POST username+password to router's /login endpoint so it grants access.
-        // dst is the router IP passed as $(dst-ip) in the hotspot redirect URL.
         if (dst && loginUsername) {
           setTimeout(() => mikrotikLogin(dst, loginUsername, url ?? ""), 2000);
         } else if (url) {
@@ -199,10 +201,26 @@ function CaptivePortal() {
           phone: fmtPhone,
           notes: `Portal purchase: ${selectedPkg.name}`,
           package_id: selectedPkg.id,
+          mac_address: mac ?? null,
         })
         .select("id")
         .single();
       if (pe) throw new Error("Could not create payment: " + pe.message);
+
+      // Pre-create subscription in pending state — activated when payment completes
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + (selectedPkg.duration_days || 1));
+      const username = fmtPhone.replace(/\D/g, "").slice(-9);
+      await (supabase as any).from("subscriptions").upsert({
+        tenant_id: tenantId,
+        customer_id: customer.id,
+        package_id: selectedPkg.id,
+        username,
+        password: username,
+        status: "pending",
+        expires_at: expiresAt.toISOString(),
+        payment_id: payment.id,
+      }, { onConflict: "username,tenant_id", ignoreDuplicates: false });
 
       // Initiate STK push — pass paymentId as accountRef so callback can match
       const result = await initiateStkPush({

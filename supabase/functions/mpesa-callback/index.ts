@@ -72,6 +72,18 @@ serve(async (req) => {
           mpesa_receipt: mpesaReceipt,
         }).eq("id", payment.id);
 
+        // Activate subscription immediately — this is what lets RADIUS auth the user
+        await supabase.from("subscriptions")
+          .update({ status: "active" })
+          .eq("payment_id", payment.id);
+
+        // Also activate by customer+tenant in case payment_id not set on subscription
+        await supabase.from("subscriptions")
+          .update({ status: "active" })
+          .eq("customer_id", payment.customer_id)
+          .eq("tenant_id", payment.tenant_id)
+          .eq("status", "pending");
+
         // Create in-app notification for all ISP owner/admin users in the tenant
         const { data: tenantUsers } = await supabase
           .from("profiles")
