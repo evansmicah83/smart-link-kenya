@@ -543,10 +543,16 @@ function RoutersPage() {
         realtimeChannelRef.current = null;
       }
       const safetyTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
+      const gotFirstLog = { current: false };
       const channel = supabase.channel(`provision-${routerId}`)
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "provision_logs", filter: `tenant_id=eq.${tenantId}` }, (payload) => {
           const row = (payload as any).new;
           if (!row || row.router_id !== routerId) return;
+          // Cancel safety timer as soon as first real log arrives
+          if (!gotFirstLog.current) {
+            gotFirstLog.current = true;
+            if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
+          }
           addLog(row.message || row.stage || "log", row.success ? "success" : "error");
           if (row.stage === "complete") {
             if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
@@ -567,12 +573,13 @@ function RoutersPage() {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token ?? null;
 
-      // Safety timeout — if no realtime event arrives within 45s, mark done
+      // Safety timeout — only fires if NO realtime log arrives within 90s
       const safetyTimer = setTimeout(() => {
+        if (gotFirstLog.current) return; // logs are flowing, don't interrupt
         addLog("Apply timed out — router API unreachable. DB config was saved. Enable port 8728 in Winbox then retry.", "warn");
         setApplyTimedOut(true);
         setApplyDone(true);
-      }, 30_000);
+      }, 90_000);
       safetyTimerRef.current = safetyTimer;
 
       const res = await fetch(`${SUPABASE_FUNCTIONS}/apply-router-config`, {
@@ -611,12 +618,18 @@ function RoutersPage() {
         const icon = level === "success" ? "✓" : level === "error" ? "✕" : level === "warn" ? "⚠" : "•";
         setLogLines((prev) => [...prev, { ts, level, icon, message }]);
       };
+      const gotFirstLog = { current: false };
+      const safetyTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
       const channel = supabase.channel(`provision-reinvoke-${routerId}`)
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "provision_logs", filter: `tenant_id=eq.${tenantId}` }, (payload) => {
           const row = (payload as any).new;
           if (!row || row.router_id !== routerId) return;
+          if (!gotFirstLog.current) {
+            gotFirstLog.current = true;
+            if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
+          }
           addLog(row.message || row.stage || "log", row.success ? "success" : "error");
-          if (row.stage === "complete") setApplyDone(true);
+          if (row.stage === "complete") { if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current); setApplyDone(true); }
         })
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "routers", filter: `tenant_id=eq.${tenantId}` }, (payload) => {
           const row = (payload as any).new;
@@ -626,6 +639,13 @@ function RoutersPage() {
         })
         .subscribe();
       realtimeChannelRef.current = channel;
+      const safetyTimer = setTimeout(() => {
+        if (gotFirstLog.current) return;
+        addLog("Apply timed out — router API unreachable. DB config was saved. Enable port 8728 in Winbox then retry.", "warn");
+        setApplyTimedOut(true);
+        setApplyDone(true);
+      }, 90_000);
+      safetyTimerRef.current = safetyTimer;
       addLog("Retrying apply...", "info");
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token ?? null;
