@@ -11,6 +11,8 @@ import { useAuth } from "@/lib/auth";
 import { useBranding } from "@/lib/branding";
 import { buildProvisioningTemplate } from "@/lib/provisioning/templates";
 
+const SUPABASE_FUNCTIONS = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+
 export const Route = createFileRoute("/_authenticated/routers/")({
   component: RoutersPage,
 });
@@ -225,7 +227,7 @@ function RoutersPage() {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
       if (!accessToken) { throw new Error("Not authenticated"); }
-      const res = await fetch(`/functions/v1/get-router-interfaces`, {
+      const res = await fetch(`${SUPABASE_FUNCTIONS}/get-router-interfaces`, {
         method: "POST",
         headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ routerId }),
@@ -591,7 +593,7 @@ function RoutersPage() {
         addLog('Invoking apply-router-config...', 'info');
         const { data } = await supabase.auth.getSession();
         const accessToken = data?.session?.access_token ?? data?.access_token ?? null;
-        const res = await fetch('/functions/v1/apply-router-config', {
+        const res = await fetch(`${SUPABASE_FUNCTIONS}/apply-router-config`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', Authorization: `Bearer ${accessToken}` },
           body: JSON.stringify({ routerId }),
@@ -655,7 +657,7 @@ function RoutersPage() {
       addLog('Invoking apply-router-config (retry)...', 'info');
       const { data } = await supabase.auth.getSession();
       const accessToken = data?.session?.access_token ?? data?.access_token ?? null;
-      const res = await fetch('/functions/v1/apply-router-config', {
+      const res = await fetch(`${SUPABASE_FUNCTIONS}/apply-router-config`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ routerId }),
@@ -1840,7 +1842,7 @@ function RoutersPage() {
                     const { data: sessionData } = await supabase.auth.getSession();
                     const accessToken = sessionData?.session?.access_token;
                     if (!accessToken) throw new Error("Not authenticated");
-                    const res = await fetch("/functions/v1/create-provision-token", {
+                    const res = await fetch(`${SUPABASE_FUNCTIONS}/create-provision-token`, {
                       method: "POST",
                       headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
                       body: JSON.stringify({ routerId: newRouterId }),
