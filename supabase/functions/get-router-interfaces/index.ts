@@ -60,7 +60,7 @@ serve(async (req: Request) => {
 
     const host = router.connection_string || router.ip_address || null;
     const port = router.api_port || 8728;
-    if (!host) return new Response(JSON.stringify({ error: "Router IP not configured" }), { status: 400, headers: { ...CORS, "content-type": "application/json" } });
+    if (!host) return new Response(JSON.stringify({ interfaces: [] }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
 
     const basicAuth = router.api_username && router.api_password
       ? `Basic ${btoa(`${router.api_username}:${router.api_password}`)}`
@@ -102,7 +102,7 @@ serve(async (req: Request) => {
       }
     }
 
-    return new Response(JSON.stringify({ error: "Unable to reach router REST API", detail: String(lastErr) }), { status: 502, headers: { ...CORS, "content-type": "application/json" } });
+    return new Response(JSON.stringify({ interfaces: [] }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
   } catch (err) {
     console.error(err);
     return new Response(JSON.stringify({ error: "Internal error" }), { status: 500, headers: { ...CORS, "content-type": "application/json" } });
