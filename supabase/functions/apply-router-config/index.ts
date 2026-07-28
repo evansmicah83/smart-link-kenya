@@ -4,12 +4,38 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
+const APP_URL = Deno.env.get("APP_URL") || "https://smart-link-kenya.vercel.app";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+type LogEntry = { stage: string; message: string; success: boolean };
+
+// Push a real RouterOS command to the router via REST API and return success.
+async function routerExec(
+  restBase: string,
+  auth: string,
+  path: string,
+  method: "GET" | "POST" | "PATCH" | "PUT",
+  body?: Record<string, unknown>,
+): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  try {
+    const res = await fetch(`${restBase}${path}`, {
+      method,
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(8000),
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text).catch?.(() => text) ?? text : undefined;
+    return res.ok ? { ok: true, data } : { ok: false, error: `HTTP ${res.status}: ${text}` };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
+}
 
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
@@ -39,11 +65,13 @@ serve(async (req: Request) => {
     if (selErr || !router) return new Response(JSON.stringify({ error: "Router not found" }), { status: 404, headers: { ...CORS, "content-type": "application/json" } });
 
     const tenantId = profile.tenant_id;
+    const logs: LogEntry[] = [];
+    const log = (stage: string, message: string, success: boolean) => logs.push({ stage, message, success });
 
-    // 1. Resolve real RADIUS host — find any active radius_server for this tenant that has a real host
+    // ── 1. Resolve RADIUS ────────────────────────────────────────────────────
     const { data: realRadius } = await supabase
       .from("radius_servers")
-      .select("id, host")
+      .select("id, host, auth_port, acct_port, shared_secret")
       .eq("tenant_id", tenantId)
       .eq("is_active", true)
       .neq("host", "pending")
@@ -51,40 +79,147 @@ serve(async (req: Request) => {
       .limit(1)
       .maybeSingle();
 
-    // 2. Fix any pending radius_server records for this tenant with the real host
+    // Fix any pending radius_server records with the real host
     if (realRadius?.host) {
-      await supabase
-        .from("radius_servers")
-        .update({ host: realRadius.host, is_healthy: true })
-        .eq("tenant_id", tenantId)
-        .eq("host", "pending");
+      await supabase.from("radius_servers").update({ host: realRadius.host, is_healthy: true })
+        .eq("tenant_id", tenantId).eq("host", "pending");
     }
 
-    // 3. Ensure nas_devices record has correct nas_identifier (= router name, what MikroTik sends)
-    await supabase
-      .from("nas_devices")
-      .update({
-        nas_identifier: router.provisioning_identity || router.name,
-        name: router.provisioning_identity || router.name,
-        is_active: true,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("router_id", routerId);
+    // ── 2. Fix NAS identifier in DB ──────────────────────────────────────────
+    await supabase.from("nas_devices").update({
+      nas_identifier: router.provisioning_identity || router.name,
+      name: router.provisioning_identity || router.name,
+      is_active: true,
+      updated_at: new Date().toISOString(),
+    }).eq("router_id", routerId);
+    log("nas", `NAS identifier set to "${router.provisioning_identity || router.name}"`, true);
 
-    // 4. Mark router active
+    // ── 3. Push live config to router via REST API ───────────────────────────
+    const host = router.connection_string || router.ip_address;
+    const apiPort = router.api_port ?? 8728;
+    const apiUser = router.api_username;
+    const apiPass = router.api_password;
+    let routerApiOk = false;
+
+    if (host && apiUser && apiPass) {
+      const restBase = `http://${host}:${apiPort}/rest`;
+      const basicAuth = "Basic " + btoa(`${apiUser}:${apiPass}`);
+
+      // 3a. Verify connectivity
+      const ping = await routerExec(restBase, basicAuth, "/system/identity", "GET");
+      if (ping.ok) {
+        routerApiOk = true;
+        log("api_check", `Router API reachable at ${host}:${apiPort}`, true);
+
+        const services: string[] = router.services || [];
+        const hasHotspot = services.includes("hotspot");
+        const hasPppoe = services.includes("pppoe");
+        const radiusHost = realRadius?.host ?? null;
+        const radiusSecret = realRadius?.shared_secret ?? "SmartLinkNet-Public-Fallback";
+        const radiusAuthPort = realRadius?.auth_port ?? 1812;
+        const radiusAcctPort = realRadius?.acct_port ?? 1813;
+        const radiusService = hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp";
+
+        const { data: tenant } = await supabase.from("tenants").select("slug, name").eq("id", tenantId).maybeSingle();
+        const ispSlug = (tenant as any)?.slug ?? tenantId;
+        const companySlug = ispSlug.replace(/[^a-z0-9]/g, "-").toLowerCase();
+
+        // 3b. Update system identity
+        const identityRes = await routerExec(restBase, basicAuth, "/system/identity", "POST", { name: router.provisioning_identity || router.name });
+        log("identity", identityRes.ok ? `Identity set to "${router.provisioning_identity || router.name}"` : `Identity update failed: ${identityRes.error}`, identityRes.ok);
+
+        // 3c. Push RADIUS config if we have a real host
+        if (radiusHost) {
+          // Remove stale SmartLinkNet RADIUS entries then add fresh
+          const listRes = await routerExec(restBase, basicAuth, "/radius?comment=SmartLinkNet", "GET");
+          if (listRes.ok && Array.isArray(listRes.data)) {
+            for (const entry of listRes.data as any[]) {
+              await routerExec(restBase, basicAuth, `/radius/${entry[".id"]}`, "POST", { ".id": entry[".id"] });
+            }
+          }
+          const radiusRes = await routerExec(restBase, basicAuth, "/radius/add", "POST", {
+            service: radiusService,
+            address: radiusHost,
+            secret: radiusSecret,
+            "authentication-port": String(radiusAuthPort),
+            "accounting-port": String(radiusAcctPort),
+            timeout: "3000ms",
+            comment: "SmartLinkNet",
+          });
+          log("radius", radiusRes.ok ? `RADIUS configured → ${radiusHost}:${radiusAuthPort}` : `RADIUS push failed: ${radiusRes.error}`, radiusRes.ok);
+
+          // 3d. Enable RADIUS incoming (CoA)
+          await routerExec(restBase, basicAuth, "/radius/incoming/set", "POST", { accept: "yes", port: "3799" });
+        } else {
+          log("radius", "No real RADIUS host available — skipped (will apply on next heartbeat)", false);
+        }
+
+        // 3e. Update hotspot profile login-page URL if hotspot is enabled
+        if (hasHotspot) {
+          const portalUrl = `${APP_URL}/portal?isp=${ispSlug}&mac=\$(mac)&ip=\$(ip)&url=\$(link-orig)&dst=\$(dst-ip)`;
+          const hsProfiles = await routerExec(restBase, basicAuth, `/ip/hotspot/profile?name=${companySlug}-hs-profile`, "GET");
+          if (hsProfiles.ok && Array.isArray(hsProfiles.data) && hsProfiles.data.length) {
+            const profileId = (hsProfiles.data as any[])[0][".id"];
+            const hsRes = await routerExec(restBase, basicAuth, `/ip/hotspot/profile/${profileId}`, "PATCH", {
+              "login-page": portalUrl,
+              ...(radiusHost ? { "use-radius": "yes", accounting: "yes" } : {}),
+            });
+            log("hotspot_profile", hsRes.ok ? "Hotspot profile login-page updated" : `Hotspot profile update failed: ${hsRes.error}`, hsRes.ok);
+          } else {
+            log("hotspot_profile", "Hotspot profile not found on router — was script run?", false);
+          }
+        }
+
+        // 3f. Update PPPoE profile to use RADIUS if available
+        if (hasPppoe && radiusHost) {
+          const pppProfiles = await routerExec(restBase, basicAuth, `/ppp/profile?name=${companySlug}-pppoe`, "GET");
+          if (pppProfiles.ok && Array.isArray(pppProfiles.data) && pppProfiles.data.length) {
+            const profileId = (pppProfiles.data as any[])[0][".id"];
+            const pppRes = await routerExec(restBase, basicAuth, `/ppp/profile/${profileId}`, "PATCH", { "use-radius": "yes" });
+            log("pppoe_profile", pppRes.ok ? "PPPoE profile updated to use RADIUS" : `PPPoE profile update failed: ${pppRes.error}`, pppRes.ok);
+          } else {
+            log("pppoe_profile", "PPPoE profile not found on router — was script run?", false);
+          }
+        }
+
+        // 3g. Ensure heartbeat scheduler points to correct router ID
+        const schedulers = await routerExec(restBase, basicAuth, "/system/scheduler?name=sln-heartbeat", "GET");
+        if (schedulers.ok && Array.isArray(schedulers.data) && schedulers.data.length) {
+          const schedId = (schedulers.data as any[])[0][".id"];
+          const heartbeatUrl = `${APP_URL}/api/heartbeat?router=${routerId}`;
+          const schedRes = await routerExec(restBase, basicAuth, `/system/scheduler/${schedId}`, "PATCH", {
+            "on-event": `:do { /tool fetch mode=https url="${heartbeatUrl}" keep-result=no } on-error={}`,
+          });
+          log("heartbeat", schedRes.ok ? "Heartbeat scheduler updated" : `Heartbeat update failed: ${schedRes.error}`, schedRes.ok);
+        } else {
+          log("heartbeat", "Heartbeat scheduler not found — run provisioning script first", false);
+        }
+
+      } else {
+        log("api_check", `Router API unreachable at ${host}:${apiPort} — ${ping.error}`, false);
+      }
+    } else {
+      log("api_check", "Router has no IP/credentials stored — skipping live push", false);
+    }
+
+    // ── 4. Mark router active in DB ──────────────────────────────────────────
     await supabase.from("routers").update({
-      status: "active",
+      status: routerApiOk ? "active" : "online",
+      api_connected: routerApiOk,
       provisioned_at: new Date().toISOString(),
     }).eq("id", routerId);
 
-    await supabase.from("provision_logs").insert([{
-      router_id: routerId,
-      stage: "complete",
-      message: `Router configured — services: ${(router.services || []).join(", ") || "none"} | RADIUS: ${realRadius?.host || "pending"}`,
-      success: true,
-    }]);
+    // ── 5. Persist all log entries ────────────────────────────────────────────
+    if (logs.length) {
+      await supabase.from("provision_logs").insert(
+        logs.map((l) => ({ router_id: routerId, stage: l.stage, message: l.message, success: l.success }))
+      );
+    }
 
-    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
+    const summary = `services: ${(router.services || []).join(", ") || "none"} | RADIUS: ${realRadius?.host || "pending"} | API: ${routerApiOk ? "connected" : "unreachable"}`;
+    await supabase.from("provision_logs").insert([{ router_id: routerId, stage: "complete", message: `Apply complete — ${summary}`, success: true }]);
+
+    return new Response(JSON.stringify({ ok: true, routerApiOk, logs }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
   } catch (err) {
     console.error(err);
     return new Response(JSON.stringify({ error: "Internal error" }), { status: 500, headers: { ...CORS, "content-type": "application/json" } });

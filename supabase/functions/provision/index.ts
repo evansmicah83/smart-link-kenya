@@ -16,7 +16,7 @@ serve(async (req: Request) => {
 
   const { data: router, error } = await supabase
     .from("routers")
-    .select("id, name, tenant_id, bridge_port, bridge_ports, services, mode, subnet, provision_token_expires_at")
+    .select("id, name, tenant_id, bridge_port, bridge_ports, services, mode, subnet, provision_token_expires_at, api_username, api_password")
     .eq("provision_token", token)
     .maybeSingle();
 
@@ -73,12 +73,22 @@ serve(async (req: Request) => {
   const hasHotspot = services.includes("hotspot");
   const hasPppoe = services.includes("pppoe");
 
-  const radiusHost = (radiusServer?.host && radiusServer.host !== "pending") ? radiusServer.host : null;
+  // Always resolve a RADIUS host: prefer DB record, fall back to APP_URL hostname
+  // so RADIUS is never silently skipped on first provision.
+  const appHost = new URL(APP_URL).hostname;
+  const radiusHost = (radiusServer?.host && radiusServer.host !== "pending") ? radiusServer.host : appHost;
   const radiusSecret = radiusServer?.shared_secret || "SmartLinkNet-Public-Fallback";
   const radiusAuthPort = radiusServer?.auth_port || 1812;
   const radiusAcctPort = radiusServer?.acct_port || 1813;
 
   const portalLoginPage = `${APP_URL}/portal?isp=${ispSlug}&mac=\$(mac)&ip=\$(ip)&url=\$(link-orig)&dst=\$(dst-ip)`;
+
+  // Generate or reuse API credentials so the platform can connect back to the router
+  const apiUsername = (router.api_username && router.api_username !== "admin") ? router.api_username : "sln-api";
+  const apiPassword = router.api_password || Array.from(crypto.getRandomValues(new Uint8Array(12))).map((b: number) => b.toString(16).padStart(2, "0")).join("");
+  // Persist credentials before script runs so they're available immediately
+  await supabase.from("routers").update({ api_username: apiUsername, api_password: apiPassword }).eq("id", router.id);
+
   const callbackUrl = `https://${new URL(SUPABASE_URL).host}/functions/v1/provision-callback?router_id=${router.id}&stage=complete`;
 
   // Helper: wrap a command so it never halts the script on error
@@ -130,14 +140,13 @@ serve(async (req: Request) => {
     `/ip dns set allow-remote-requests=yes servers=8.8.8.8,8.8.4.4`,
   );
 
-  if (radiusHost) {
-    lines.push(
-      ``,
-      `# 8. RADIUS`,
-      safe(`/radius remove [find comment="SmartLinkNet"]`),
-      `/radius add service=${radiusService} address=${radiusHost} secret=${radiusSecret} authentication-port=${radiusAuthPort} accounting-port=${radiusAcctPort} timeout=3000ms comment="SmartLinkNet"`,
-    );
-  }
+  lines.push(
+    ``,
+    `# 8. RADIUS`,
+    safe(`/radius remove [find comment="SmartLinkNet"]`),
+    `/radius add service=${radiusService} address=${radiusHost} secret=${radiusSecret} authentication-port=${radiusAuthPort} accounting-port=${radiusAcctPort} timeout=3000ms comment="SmartLinkNet"`,
+    `/radius incoming set accept=yes port=3799`,
+  );
 
   if (hasHotspot) {
     lines.push(
@@ -146,7 +155,7 @@ serve(async (req: Request) => {
       safe(`/ip hotspot disable [find name=${companySlug}-hotspot]`),
       safe(`/ip hotspot remove [find name=${companySlug}-hotspot]`),
       safe(`/ip hotspot profile remove [find name=${companySlug}-hs-profile]`),
-      `/ip hotspot profile add name=${companySlug}-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d ${radiusHost ? "use-radius=yes accounting=yes" : ""} login-page="${portalLoginPage}"`,
+      `/ip hotspot profile add name=${companySlug}-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d use-radius=yes accounting=yes login-page="${portalLoginPage}"`,
       `/ip hotspot add name=${companySlug}-hotspot interface=${bridgeName} address-pool=${companySlug}-pool profile=${companySlug}-hs-profile disabled=no`,
       ``,
       `# Walled Garden`,
@@ -170,18 +179,23 @@ serve(async (req: Request) => {
       safe(`/interface pppoe-server server disable [find name=${companySlug}-pppoe]`),
       safe(`/interface pppoe-server server remove [find name=${companySlug}-pppoe]`),
       safe(`/ppp profile remove [find name=${companySlug}-pppoe comment="SmartLinkNet"]`),
-      `/ppp profile add name=${companySlug}-pppoe ${radiusHost ? "use-radius=yes" : ""} comment="SmartLinkNet"`,
+      `/ppp profile add name=${companySlug}-pppoe use-radius=yes comment="SmartLinkNet"`,
       `/interface pppoe-server server add name=${companySlug}-pppoe interface=${bridgeName} default-profile=${companySlug}-pppoe disabled=no`,
     );
   }
 
   lines.push(
     ``,
-    `# 11. Heartbeat`,
+    `# 11. API user & port`,
+    `/ip service set api port=8728 disabled=no`,
+    safe(`/user remove [find name="${apiUsername}"]`),
+    safe(`/user add name="${apiUsername}" password="${apiPassword}" group=full comment="SmartLinkNet"`),
+    ``,
+    `# 12. Heartbeat`,
     safe(`/system scheduler remove [find name=sln-heartbeat]`),
     `/system scheduler add name=sln-heartbeat interval=5m on-event=":do { /tool fetch mode=https url=\\"${APP_URL}/api/heartbeat?router=${router.id}\\" keep-result=no } on-error={}" comment="SmartLinkNet"`,
     ``,
-    `# 12. Report back`,
+    `# 13. Report back`,
     safe(`/tool fetch mode=https url="${callbackUrl}" keep-result=no`),
     `:log info "SmartLinkNet: provisioning complete for ${safeName}"`,
   );

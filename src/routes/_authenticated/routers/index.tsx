@@ -279,16 +279,48 @@ function RoutersPage() {
       return data ?? [];
     },
     enabled: !!tenantId,
-    refetchInterval: 30000,
   });
 
-  // Auto-refresh router list every 60s — status is set by heartbeat (server.ts /provision/notify)
+  // Real live session count from hotspot_sessions + pppoe_sessions
+  const liveSessionsQuery = useQuery({
+    queryKey: ["live-sessions", tenantId],
+    queryFn: async () => {
+      if (!tenantId) return 0;
+      const [hs, ppp] = await Promise.all([
+        supabase.from("hotspot_sessions" as any).select("id", { count: "exact", head: true })
+          .eq("tenant_id", tenantId).eq("status", "active"),
+        supabase.from("pppoe_sessions" as any).select("id", { count: "exact", head: true })
+          .eq("tenant_id", tenantId).eq("status", "active"),
+      ]);
+      return (hs.count ?? 0) + (ppp.count ?? 0);
+    },
+    enabled: !!tenantId,
+    refetchInterval: 30_000,
+  });
+  const liveSessions = liveSessionsQuery.data ?? 0;
+
+  // Realtime subscription — any router UPDATE for this tenant pushes instantly into the cache
+  const routersRealtimeRef = useRef<any | null>(null);
   useEffect(() => {
     if (!tenantId) return;
-    const interval = setInterval(() => {
-      queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
-    }, 60000);
-    return () => clearInterval(interval);
+    // Clean up previous channel if tenantId changes
+    if (routersRealtimeRef.current) {
+      try { supabase.removeChannel(routersRealtimeRef.current); } catch {}
+      routersRealtimeRef.current = null;
+    }
+    const channel = supabase
+      .channel(`routers-status-${tenantId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'routers', filter: `tenant_id=eq.${tenantId}` },
+        () => { queryClient.invalidateQueries({ queryKey: ["routers", tenantId] }); },
+      )
+      .subscribe();
+    routersRealtimeRef.current = channel;
+    return () => {
+      try { supabase.removeChannel(channel); } catch {}
+      routersRealtimeRef.current = null;
+    };
   }, [tenantId]);
 
   const routers = routersQuery.data ?? [];
@@ -417,7 +449,7 @@ function RoutersPage() {
 
   async function handleRefresh() {
     setRefreshing(true);
-    await new Promise((r) => window.setTimeout(r, 900));
+    await queryClient.refetchQueries({ queryKey: ["router-interfaces", routerId] });
     setRefreshing(false);
     toast.success("Interfaces refreshed");
   }
@@ -440,7 +472,6 @@ function RoutersPage() {
       const provSlug = `${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`;
       const subnet = customSubnet ? subnetValue : "172.31.0.0/16";
 
-      // client-side validation: uplink must not be included in bridge_ports
       if (uplinkInterface && bridgePorts.includes(uplinkInterface)) {
         toast.error("Selected uplink must not be joined to the bridge");
         setStep(3);
@@ -451,170 +482,98 @@ function RoutersPage() {
       addLog("Saving router configuration...", "info");
       const { error: updateErr } = await supabase.from("routers").update({
         services: selectedServices,
-        // Backwards compatibility: single bridge_port (first in array)
         bridge_port: bridgePorts && bridgePorts.length ? bridgePorts[0] : bridgePort,
-        // New fields
         bridge_ports: bridgePorts,
         uplink_interface: uplinkInterface,
         subnet,
-        // mode column: pppoe, hotspot, both
-        mode: (pppoe && hotspot) ? 'both' : (pppoe ? 'pppoe' : (hotspot ? 'hotspot' : null)),
+        mode: (pppoe && hotspot) ? "both" : (pppoe ? "pppoe" : (hotspot ? "hotspot" : null)),
         provisioning_identity: identity.trim(),
         provisioning_slug: provSlug,
       } as any).eq("id", routerId);
       if (updateErr) throw new Error(`Failed to save router config: ${updateErr.message}`);
-      addLog(`Router config saved — services: ${selectedServices.map(s => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ")}`, "success");
+      addLog(`Config saved — services: ${selectedServices.map(s => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ")}`, "success");
 
-      // 2. Upsert NAS device record
-      addLog("Registering NAS device...", "info");
+      // 2. Upsert NAS device
       const { data: existingNas } = await supabase.from("nas_devices" as any).select("id").eq("router_id", routerId).maybeSingle();
       const nasPayload = {
-        tenant_id: tenantId,
-        router_id: routerId,
-        name: identity.trim(),
-        vendor: "mikrotik",
-        nas_identifier: identity.trim(),
-        shared_secret: "SmartLinkNet-Public-Fallback",
-        auth_port: 1812,
-        acct_port: 1813,
-        coa_port: 3799,
-        is_active: true,
-        dynamic_profile_enabled: true,
-        updated_at: new Date().toISOString(),
+        tenant_id: tenantId, router_id: routerId, name: identity.trim(), vendor: "mikrotik",
+        nas_identifier: identity.trim(), shared_secret: "SmartLinkNet-Public-Fallback",
+        auth_port: 1812, acct_port: 1813, coa_port: 3799, is_active: true,
+        dynamic_profile_enabled: true, updated_at: new Date().toISOString(),
       };
       if (existingNas?.id) {
         await supabase.from("nas_devices" as any).update(nasPayload).eq("id", existingNas.id);
       } else {
         await supabase.from("nas_devices" as any).insert(nasPayload);
       }
-      addLog("NAS device registered", "success");
 
       // 3. Upsert RADIUS server record
-      addLog("Configuring RADIUS server...", "info");
       const { data: existingRadius } = await supabase.from("radius_servers" as any).select("id").eq("tenant_id", tenantId).eq("name", identity.trim()).maybeSingle();
       const radiusPayload = {
-        tenant_id: tenantId,
-        name: identity.trim(),
-        auth_port: 1812,
-        acct_port: 1813,
-        shared_secret: "SmartLinkNet-Public-Fallback",
-        protocol: "mschapv2",
-        is_primary: true,
-        is_active: true,
-        is_healthy: true,
-        timeout_ms: 3000,
-        retry_count: 3,
-        priority: 1,
-        updated_at: new Date().toISOString(),
+        tenant_id: tenantId, name: identity.trim(), auth_port: 1812, acct_port: 1813,
+        shared_secret: "SmartLinkNet-Public-Fallback", protocol: "mschapv2",
+        is_primary: true, is_active: true, is_healthy: true,
+        timeout_ms: 3000, retry_count: 3, priority: 1, updated_at: new Date().toISOString(),
       };
       if (existingRadius?.id) {
         await supabase.from("radius_servers" as any).update(radiusPayload).eq("id", existingRadius.id);
       } else {
-        // host will be updated by markRouterOnline when router checks in with real SERVER_IP
         await supabase.from("radius_servers" as any).insert({ ...radiusPayload, host: "pending" });
       }
-      addLog("RADIUS server record saved", "success");
 
-      // 4. Save hotspot portal URL if hotspot enabled
+      // 4. Save hotspot portal URL
       if (hotspot) {
-        addLog("Configuring hotspot captive portal...", "info");
         const { data: tenantRow } = await supabase.from("tenants").select("slug").eq("id", tenantId).maybeSingle();
         const ispSlug = (tenantRow as any)?.slug ?? tenantId;
         const portalLoginPage = `${window.location.origin}/portal?isp=${ispSlug}&mac=$(mac)&ip=$(ip)&url=$(link-orig)&dst=$(dst-ip)`;
-        await (supabase as any).from("settings").upsert({
-          tenant_id: tenantId,
-          key: "hotspot_login_page",
-          value: portalLoginPage,
-        }, { onConflict: "tenant_id,key" });
-        addLog(`Captive portal URL configured`, "success");
+        await (supabase as any).from("settings").upsert(
+          { tenant_id: tenantId, key: "hotspot_login_page", value: portalLoginPage },
+          { onConflict: "tenant_id,key" }
+        );
       }
-
-      // 5. Verify provisioning script is reachable and contains full config
-      addLog("Verifying provisioning script...", "info");
-      const provisionUrl = `${window.location.origin}/provision/${provSlug}`;
-      const scriptRes = await fetch(provisionUrl);
-      if (!scriptRes.ok) throw new Error(`Provisioning script not reachable (HTTP ${scriptRes.status})`);
-      const scriptText = await scriptRes.text();
-      if (!scriptText.includes("SmartLinkNet")) throw new Error("Provisioning script content invalid");
-      const hasCorrectServices = (
-        (!pppoe || scriptText.includes("pppoe-server")) &&
-        (!hotspot || scriptText.includes("hotspot"))
-      );
-      if (!hasCorrectServices) throw new Error("Provisioning script missing selected service configuration");
-      addLog("Provisioning script verified — all services present", "success");
-
-      // 6. Read router status (set by heartbeat in step 2)
-      const { data: routerRow } = await supabase.from("routers").select("status, ip_address, last_seen").eq("id", routerId).single();
-      if (routerRow?.status === "online") {
-        addLog(`Router online — last heartbeat ${routerRow.last_seen ? new Date(routerRow.last_seen).toLocaleTimeString() : "just now"}`, "success");
-        if (routerRow.ip_address) setVpnAddress(routerRow.ip_address);
-      } else {
-        addLog("Router is offline — run the provisioning script in Winbox to activate", "warn");
-      }
-
-      // 7. Summary (persisted locally, provisioning worker will perform router-facing changes)
-      addLog(`Bridge: ${bridgePort} → ${provisioningTemplate.bridgeName}`, "success");
-      addLog(`Subnet: ${subnet}`, "success");
-      addLog(`Auto-update scheduler: daily at 00:00`, "success");
-      addLog("Router is fully configured and ready for subscribers — starting apply step", "info");
 
       queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
 
-      // Subscribe to provision_logs and routers updates for live logs/status
-      try {
-        if (realtimeChannelRef.current) {
-          try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
-          realtimeChannelRef.current = null;
-        }
-
-        const channel = supabase.channel(`provision-${routerId}`)
-          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'provision_logs', filter: `router_id=eq.${routerId}` }, (payload) => {
-            const row = (payload as any).new;
-            if (!row) return;
-            addLog(row.message || row.stage || 'log', row.success ? 'success' : 'error');
-          })
-          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'routers', filter: `id=eq.${routerId}` }, (payload) => {
-            const row = (payload as any).new;
-            if (!row) return;
-            if (row.status === 'active') {
-              addLog('Router marked active', 'success');
-              setApplyDone(true);
-            }
-            if (row.status === 'failed') {
-              addLog('Router provisioning failed', 'error');
-              setApplyDone(true);
-            }
-          })
-          .subscribe();
-
-        realtimeChannelRef.current = channel;
-
-        // Invoke Edge Function to apply router config
-        addLog('Invoking apply-router-config...', 'info');
-        const { data } = await supabase.auth.getSession();
-        const accessToken = data?.session?.access_token ?? data?.access_token ?? null;
-        const res = await fetch(`${SUPABASE_FUNCTIONS}/apply-router-config`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', Authorization: `Bearer ${accessToken}` },
-          body: JSON.stringify({ routerId }),
-        });
-        if (!res.ok) {
-          const txt = await res.text();
-          addLog(`Apply function returned error: ${txt}`, 'error');
-          setApplyDone(true);
-          try { supabase.removeChannel(realtimeChannelRef.current); } catch {};
-          realtimeChannelRef.current = null;
-        } else {
-          addLog('Services, NAS and RADIUS records saved to platform', 'success');
-          addLog('Router is active — subscribers can now be added', 'success');
-          setApplyDone(true);
-        }
-      } catch (err: any) {
-        addLog(`Error starting apply: ${err?.message || String(err)}`, 'error');
-        setApplyDone(true);
+      // 5. Subscribe to provision_logs realtime — ALL log lines come from here
+      if (realtimeChannelRef.current) {
+        try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
+        realtimeChannelRef.current = null;
       }
+      const channel = supabase.channel(`provision-${routerId}`)
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "provision_logs", filter: `router_id=eq.${routerId}` }, (payload) => {
+          const row = (payload as any).new;
+          if (!row) return;
+          addLog(row.message || row.stage || "log", row.success ? "success" : "error");
+        })
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "routers", filter: `id=eq.${routerId}` }, (payload) => {
+          const row = (payload as any).new;
+          if (!row) return;
+          if (row.status === "active") { addLog("Router is active — subscribers can now be added", "success"); setApplyDone(true); }
+          if (row.status === "failed") { addLog("Router provisioning failed", "error"); setApplyDone(true); }
+        })
+        .subscribe();
+      realtimeChannelRef.current = channel;
+
+      // 6. Call apply-router-config — it pushes live config to router and inserts provision_logs rows
+      addLog("Applying configuration to router...", "info");
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token ?? null;
+      const res = await fetch(`${SUPABASE_FUNCTIONS}/apply-router-config`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ routerId }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        addLog(`Apply failed: ${txt}`, "error");
+        setApplyDone(true);
+        try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
+        realtimeChannelRef.current = null;
+      }
+      // logs and done state are driven by realtime subscription above
     } catch (err: any) {
-      addLog(`Error: ${err.message || "Configuration failed"}`, "error");
+      const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      setLogLines((prev) => [...prev, { ts, level: "error", icon: "✕", message: err.message || "Configuration failed" }]);
       setApplyDone(true);
     }
   }
@@ -623,56 +582,48 @@ function RoutersPage() {
     if (!routerId) return;
     setApplyDone(false);
     setLogLines([]);
-    // subscribe and call apply function similar to handleApply's final step
     try {
       if (realtimeChannelRef.current) {
         try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
         realtimeChannelRef.current = null;
       }
+      const addLog = (message: string, level: "info" | "success" | "warn" | "error" = "info") => {
+        const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        const icon = level === "success" ? "✓" : level === "error" ? "✕" : level === "warn" ? "⚠" : "•";
+        setLogLines((prev) => [...prev, { ts, level, icon, message }]);
+      };
       const channel = supabase.channel(`provision-${routerId}`)
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'provision_logs', filter: `router_id=eq.${routerId}` }, (payload) => {
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "provision_logs", filter: `router_id=eq.${routerId}` }, (payload) => {
           const row = (payload as any).new;
           if (!row) return;
-          const level = row.success ? 'success' : 'error';
-          const icon = level === 'success' ? '✓' : '✕';
-          const ts = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-          setLogLines((prev) => [...prev, { ts, level: level as any, icon, message: row.message || row.stage || 'log' }]);
+          addLog(row.message || row.stage || "log", row.success ? "success" : "error");
         })
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'routers', filter: `id=eq.${routerId}` }, (payload) => {
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "routers", filter: `id=eq.${routerId}` }, (payload) => {
           const row = (payload as any).new;
           if (!row) return;
-          if (row.status === 'active') {
-            setLogLines((prev) => [...prev, { ts: new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }), level: 'success', icon: '✓', message: 'Router marked active' }]);
-            setApplyDone(true);
-          }
-          if (row.status === 'failed') {
-            setLogLines((prev) => [...prev, { ts: new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }), level: 'error', icon: '✕', message: 'Router provisioning failed' }]);
-            setApplyDone(true);
-          }
+          if (row.status === "active") { addLog("Router is active — subscribers can now be added", "success"); setApplyDone(true); }
+          if (row.status === "failed") { addLog("Router provisioning failed", "error"); setApplyDone(true); }
         })
         .subscribe();
-
       realtimeChannelRef.current = channel;
-
-      addLog('Invoking apply-router-config (retry)...', 'info');
-      const { data } = await supabase.auth.getSession();
-      const accessToken = data?.session?.access_token ?? data?.access_token ?? null;
+      addLog("Retrying apply...", "info");
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token ?? null;
       const res = await fetch(`${SUPABASE_FUNCTIONS}/apply-router-config`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ routerId }),
       });
       if (!res.ok) {
         const txt = await res.text();
-        addLog(`Apply function returned error: ${txt}`, 'error');
+        addLog(`Apply failed: ${txt}`, "error");
         setApplyDone(true);
-        try { supabase.removeChannel(realtimeChannelRef.current); } catch {};
+        try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
         realtimeChannelRef.current = null;
-      } else {
-        addLog('Apply started — streaming logs will appear below', 'info');
       }
     } catch (err: any) {
-      addLog(`Retry start failed: ${err?.message || String(err)}`, 'error');
+      const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      setLogLines((prev) => [...prev, { ts, level: "error", icon: "✕", message: err?.message || String(err) }]);
       setApplyDone(true);
     }
   }
@@ -684,18 +635,24 @@ function RoutersPage() {
     }
 
     try {
+      const credentialChanging = editApiUsername.trim() || editApiPassword.trim();
       const { error } = await supabase.from("routers").update({
         name: editName.trim(),
         model: editModel.trim() || null,
         ...(editIp && { connection_string: editIp.trim() }),
-        ...(editApiUsername && { api_username: editApiUsername.trim() }),
-        ...(editApiPassword && { api_password: editApiPassword.trim() }),
+        // Write new credentials to pending columns — backend applies them to the
+        // router on the next heartbeat and promotes them to active on success
+        ...(editApiUsername.trim() && { api_username_pending: editApiUsername.trim() }),
+        ...(editApiPassword.trim() && { api_password_pending: editApiPassword.trim() }),
         api_port: 8728,
       } as any).eq("id", editingRouter.id);
 
       if (error) throw error;
 
-      toast.success("Router updated successfully");
+      toast.success(credentialChanging
+        ? "Router updated — new credentials will be applied on next heartbeat (≤5 min)"
+        : "Router updated successfully"
+      );
       setEditingRouter(null);
       queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
     } catch (err: any) {
@@ -721,34 +678,32 @@ function RoutersPage() {
     try {
       const { data: row, error } = await supabase
         .from("routers")
-        .select("status, last_seen, provisioning_slug, name")
+        .select("status, last_seen, name")
         .eq("id", id)
         .single();
 
       if (error) throw error;
 
-      if (row?.status === "online" && row.last_seen) {
-        const minutesAgo = Math.floor((Date.now() - new Date(row.last_seen).getTime()) / 60000);
-        const timeLabel = minutesAgo < 1 ? "just now" : minutesAgo === 1 ? "1 minute ago" : `${minutesAgo} minutes ago`;
-        toast.success(`${row.name} is online — last seen ${timeLabel}`);
-      } else if (row?.status === "online" && !row.last_seen) {
-        // Marked online but no heartbeat timestamp — treat as stale
-        await supabase.from("routers").update({ status: "offline" }).eq("id", id);
-        toast.error(`${row.name} has not sent a heartbeat — marked offline. Run the provisioning script again.`);
-      } else {
-        // Offline — give actionable guidance
-        toast.error(`${row.name} is offline. Open Winbox and run the provisioning script to bring it online.`);
-      }
+      const lastSeen = row?.last_seen ? new Date(row.last_seen) : null;
+      const minutesAgo = lastSeen ? Math.floor((Date.now() - lastSeen.getTime()) / 60000) : null;
+      const isStale = minutesAgo === null || minutesAgo > 10;
 
-      queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
+      if (row?.status === "online" && !isStale) {
+        const timeLabel = minutesAgo! < 1 ? "just now" : minutesAgo === 1 ? "1 minute ago" : `${minutesAgo} minutes ago`;
+        toast.success(`${row.name} is online — last heartbeat ${timeLabel}`);
+      } else {
+        // Stale or offline — mark offline so status is accurate
+        await supabase.from("routers").update({ status: "offline", api_connected: false } as any).eq("id", id);
+        toast.error(
+          isStale && row?.status === "online"
+            ? `${row.name} missed heartbeats (last seen ${minutesAgo}min ago) — marked offline`
+            : `${row.name} is offline — run the provisioning script in Winbox to reconnect`
+        );
+      }
     } catch {
       toast.error("Sync failed — please try again.");
     } finally {
-      setSyncing((prev) => {
-        const s = new Set(prev);
-        s.delete(id);
-        return s;
-      });
+      setSyncing((prev) => { const s = new Set(prev); s.delete(id); return s; });
     }
   }
 
@@ -813,7 +768,7 @@ function RoutersPage() {
                 { label: "ROUTERS", value: routers.length, sub: "registered NAS devices" },
                 { label: "ONLINE", value: online, sub: "reachable via monitoring" },
                 { label: "OFFLINE", value: offline, sub: "not responding" },
-                { label: "LIVE SESSIONS", value: 0, sub: "subscribers online now" },
+                { label: "LIVE SESSIONS", value: liveSessions, sub: "subscribers online now" },
               ].map((stat, i) => (
                 <div
                   key={stat.label}
@@ -1291,10 +1246,12 @@ function RoutersPage() {
                       <div className="rounded-xl border border-border overflow-hidden">
                         {([
                           { label: "Connection Status", ok: viewingRouter.status === "online", okText: "Online", failText: "Offline" },
+                          { label: "API Connected", ok: !!viewingRouter.api_connected, okText: "Verified", failText: viewingRouter.status === "online" ? "Unreachable (check port 8728)" : "Offline" },
                           { label: "VPN Integration", ok: !!viewingRouter.ip_address, okText: "Connected", failText: "Pending" },
                           { label: "Services Configured", ok: !!viewingRouter.services?.length, okText: `${viewingRouter.services?.length} active`, failText: "None" },
                           { label: "Bridge Configured", ok: !!viewingRouter.bridge_port, okText: viewingRouter.bridge_port, failText: "Not set" },
                           { label: "Hotspot Portal", ok: viewingRouter.services?.includes("hotspot") && !!viewingRouter.provisioning_slug, okText: "Login page auto-configured", failText: viewingRouter.services?.includes("hotspot") ? "Re-provision to fix" : "N/A (no hotspot)" },
+                          { label: "Credentials Pending", ok: !viewingRouter.api_username_pending && !viewingRouter.api_password_pending, okText: "In sync", failText: "Will apply on next heartbeat" },
                         ]).map((check, i, arr) => (
                           <div key={check.label} className={`flex items-center justify-between px-4 py-3 ${
                             i < arr.length - 1 ? "border-b border-border" : ""
@@ -1466,18 +1423,34 @@ function RoutersPage() {
                   </div>
                 </div>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
+                    if (!routerId) return;
                     setCheckingApiPort(true);
-                    setTimeout(() => {
-                      setApiPortDisabled(false);
+                    try {
+                      const { data: sessionData } = await supabase.auth.getSession();
+                      const accessToken = sessionData?.session?.access_token;
+                      const res = await fetch(`${SUPABASE_FUNCTIONS}/get-router-interfaces`, {
+                        method: "POST",
+                        headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
+                        body: JSON.stringify({ routerId }),
+                      });
+                      const json = res.ok ? await res.json() : null;
+                      if (json?.interfaces?.length) {
+                        setApiPortDisabled(false);
+                        toast.success("API port is reachable — router responded");
+                      } else {
+                        toast.error("API port still unreachable — run the command above first");
+                      }
+                    } catch {
+                      toast.error("Check failed — router may be offline");
+                    } finally {
                       setCheckingApiPort(false);
-                      toast.success("API port is now enabled");
-                    }, 2000);
+                    }
                   }}
                   disabled={checkingApiPort}
                   className="w-full px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium transition-colors disabled:opacity-50"
                 >
-                  {checkingApiPort ? "Verifying..." : "Verify API Port"}
+                  {checkingApiPort ? "Checking..." : "Verify API Port"}
                 </button>
               </div>
             )}
