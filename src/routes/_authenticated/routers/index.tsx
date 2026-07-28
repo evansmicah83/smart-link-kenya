@@ -281,9 +281,24 @@ function RoutersPage() {
     enabled: !!tenantId,
   });
 
-  // Live sessions — derived from active_sessions view once it exists.
-  // Kept as 0 until the sessions tables are migrated in.
-  const liveSessions = 0;
+  // Live sessions — active rows in the existing sessions table (ended_at IS NULL)
+  const liveSessionsQuery = useQuery({
+    queryKey: ["live-sessions", tenantId],
+    queryFn: async () => {
+      if (!tenantId) return 0;
+      const { count, error } = await supabase
+        .from("sessions")
+        .select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId)
+        .is("ended_at", null);
+      if (error) return 0;
+      return count ?? 0;
+    },
+    enabled: !!tenantId,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const liveSessions = liveSessionsQuery.data ?? 0;
 
   // Realtime subscription — any router UPDATE for this tenant pushes instantly into the cache
   const routersRealtimeRef = useRef<any | null>(null);
