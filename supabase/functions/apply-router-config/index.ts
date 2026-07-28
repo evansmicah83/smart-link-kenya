@@ -57,17 +57,17 @@ serve(async (req: Request) => {
 
     const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { global: { fetch } });
 
-    const log = async (stage: string, message: string, success: boolean) => {
-      await db.from("provision_logs").insert({ router_id: routerId, stage, message, success }).catch(() => {});
-    };
-
     // ── Resolve tenant ────────────────────────────────────────────────────────
     const { data: profile } = await db.from("profiles").select("tenant_id").eq("id", userId).maybeSingle();
     if (!profile?.tenant_id) {
-      await log("error", "Unable to resolve tenant", false);
       return new Response(JSON.stringify({ error: "Tenant not found" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
     }
     const tenantId = profile.tenant_id;
+
+    // Always include tenant_id so RLS allows realtime broadcast to the client
+    const log = async (stage: string, message: string, success: boolean) => {
+      await db.from("provision_logs").insert({ router_id: routerId, tenant_id: tenantId, stage, message, success }).catch(() => {});
+    };
 
     const { data: router } = await db.from("routers").select("*").eq("id", routerId).eq("tenant_id", tenantId).maybeSingle();
     if (!router) {
