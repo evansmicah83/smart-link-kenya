@@ -4,8 +4,15 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
 serve(async (req: Request) => {
-  if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405, headers: CORS });
 
   const sendLog = async (supabase: any, routerId: string, stage: string, message: string, success = true) => {
     try {
@@ -18,19 +25,19 @@ serve(async (req: Request) => {
   try {
     const authHeader = req.headers.get('authorization') || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    if (!token) return new Response(JSON.stringify({ error: 'Missing Authorization token' }), { status: 401, headers: { 'content-type': 'application/json' } });
+    if (!token) return new Response(JSON.stringify({ error: 'Missing Authorization token' }), { status: 401, headers: { ...CORS, 'content-type': 'application/json' } });
 
     // Verify user
     const authHeaders = { Authorization: 'Bearer ' + token };
     const userResp = await fetch(SUPABASE_URL.replace(/\/+$/, '') + '/auth/v1/user', { headers: authHeaders });
-    if (!userResp.ok) return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401, headers: { 'content-type': 'application/json' } });
+    if (!userResp.ok) return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401, headers: { ...CORS, 'content-type': 'application/json' } });
     const userJson = await userResp.json();
     const userId = userJson?.id;
-    if (!userId) return new Response(JSON.stringify({ error: 'Unable to resolve user' }), { status: 401, headers: { 'content-type': 'application/json' } });
+    if (!userId) return new Response(JSON.stringify({ error: 'Unable to resolve user' }), { status: 401, headers: { ...CORS, 'content-type': 'application/json' } });
 
     const body = await req.json();
     const { routerId } = body ?? {};
-    if (!routerId) return new Response(JSON.stringify({ error: 'Missing routerId' }), { status: 400, headers: { 'content-type': 'application/json' } });
+    if (!routerId) return new Response(JSON.stringify({ error: 'Missing routerId' }), { status: 400, headers: { ...CORS, 'content-type': 'application/json' } });
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { global: { fetch } });
 
@@ -40,7 +47,7 @@ serve(async (req: Request) => {
       .select('*')
       .eq('id', routerId)
       .maybeSingle();
-    if (selErr || !router) return new Response(JSON.stringify({ error: 'Router not found' }), { status: 404, headers: { 'content-type': 'application/json' } });
+    if (selErr || !router) return new Response(JSON.stringify({ error: 'Router not found' }), { status: 404, headers: { ...CORS, 'content-type': 'application/json' } });
 
     // Resolve user's tenant and confirm ownership by tenant_id
     const { data: profile, error: profileErr } = await supabase
@@ -52,19 +59,19 @@ serve(async (req: Request) => {
     if (profileErr || !profile) {
       console.error('Failed to load profile or tenant_id:', profileErr);
       await sendLog(supabase, routerId, 'authorize', 'Failed to load user tenant', false);
-      return new Response(JSON.stringify({ error: 'Unable to resolve tenant for user' }), { status: 401, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ error: 'Unable to resolve tenant for user' }), { status: 401, headers: { ...CORS, 'content-type': 'application/json' } });
     }
 
     const tenantId = profile.tenant_id;
     if (!tenantId) {
       console.error('User has no tenant_id on profile:', userId);
       await sendLog(supabase, routerId, 'authorize', 'User has no tenant assigned', false);
-      return new Response(JSON.stringify({ error: 'User is not assigned to a tenant' }), { status: 403, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ error: 'User is not assigned to a tenant' }), { status: 403, headers: { ...CORS, 'content-type': 'application/json' } });
     }
 
     if (router.tenant_id !== tenantId) {
       await sendLog(supabase, routerId, 'authorize', 'User is not owner of router', false);
-      return new Response(JSON.stringify({ error: 'Not authorized' }), { status: 403, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ error: 'Not authorized' }), { status: 403, headers: { ...CORS, 'content-type': 'application/json' } });
     }
 
     const host = router.connection_string || router.ip_address || router.host || null;
@@ -72,7 +79,7 @@ serve(async (req: Request) => {
     if (!host) {
       await sendLog(supabase, routerId, 'validate', 'Router IP not configured', false);
       await supabase.from('routers').update({ status: 'failed' }).eq('id', routerId);
-      return new Response(JSON.stringify({ error: 'Router IP not configured' }), { status: 400, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ error: 'Router IP not configured' }), { status: 400, headers: { ...CORS, 'content-type': 'application/json' } });
     }
 
     const bridgeName = router.bridge_name || 'smartlinknet-bridge';
@@ -85,7 +92,7 @@ serve(async (req: Request) => {
       const msg = `Uplink ${uplink} is included in bridge_ports — aborting`;
       await sendLog(supabase, routerId, 'validate', msg, false);
       await supabase.from('routers').update({ status: 'failed' }).eq('id', routerId);
-      return new Response(JSON.stringify({ error: msg }), { status: 400, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ error: msg }), { status: 400, headers: { ...CORS, 'content-type': 'application/json' } });
     }
 
     const baseUrls = [`https://${host}:${port}`, `http://${host}:${port}`];
@@ -132,7 +139,7 @@ serve(async (req: Request) => {
     } catch (err: any) {
       await sendLog(supabase, routerId, 'bridge_add_port', `Failed to add bridge ports: ${err.message || String(err)}`, false);
       await supabase.from('routers').update({ status: 'failed' }).eq('id', routerId);
-      return new Response(JSON.stringify({ error: 'Failed to add bridge ports' }), { status: 500, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ error: 'Failed to add bridge ports' }), { status: 500, headers: { ...CORS, 'content-type': 'application/json' } });
     }
 
     // 2. Assign subnet gateway IP to bridge interface
@@ -145,7 +152,7 @@ serve(async (req: Request) => {
     } catch (err: any) {
       await sendLog(supabase, routerId, 'assign_gateway', `Failed to assign gateway: ${err.message || String(err)}`, false);
       await supabase.from('routers').update({ status: 'failed' }).eq('id', routerId);
-      return new Response(JSON.stringify({ error: 'Failed to assign gateway' }), { status: 500, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ error: 'Failed to assign gateway' }), { status: 500, headers: { ...CORS, 'content-type': 'application/json' } });
     }
 
     // 3. PPPoE server if requested
@@ -159,7 +166,7 @@ serve(async (req: Request) => {
       } catch (err: any) {
         await sendLog(supabase, routerId, 'pppoe_setup', `Failed PPPoE setup: ${err.message || String(err)}`, false);
         await supabase.from('routers').update({ status: 'failed' }).eq('id', routerId);
-        return new Response(JSON.stringify({ error: 'Failed PPPoE setup' }), { status: 500, headers: { 'content-type': 'application/json' } });
+        return new Response(JSON.stringify({ error: 'Failed PPPoE setup' }), { status: 500, headers: { ...CORS, 'content-type': 'application/json' } });
       }
     }
 
@@ -176,7 +183,7 @@ serve(async (req: Request) => {
       } catch (err: any) {
         await sendLog(supabase, routerId, 'hotspot_setup', `Failed Hotspot setup: ${err.message || String(err)}`, false);
         await supabase.from('routers').update({ status: 'failed' }).eq('id', routerId);
-        return new Response(JSON.stringify({ error: 'Failed Hotspot setup' }), { status: 500, headers: { 'content-type': 'application/json' } });
+        return new Response(JSON.stringify({ error: 'Failed Hotspot setup' }), { status: 500, headers: { ...CORS, 'content-type': 'application/json' } });
       }
     }
 
@@ -186,12 +193,12 @@ serve(async (req: Request) => {
       await sendLog(supabase, routerId, 'complete', 'Provisioning complete', true);
     } catch (err) {
       await sendLog(supabase, routerId, 'complete', `Failed to finalize router state: ${String(err)}`, false);
-      return new Response(JSON.stringify({ error: 'Failed to finalize router state' }), { status: 500, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ error: 'Failed to finalize router state' }), { status: 500, headers: { ...CORS, 'content-type': 'application/json' } });
     }
 
-    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { ...CORS, 'content-type': 'application/json' } });
   } catch (err) {
     console.error(err);
-    return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500, headers: { ...CORS, 'content-type': 'application/json' } });
   }
 });
