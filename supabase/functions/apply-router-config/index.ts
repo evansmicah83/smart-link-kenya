@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.201.0/http/server.ts";
-import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -64,9 +64,10 @@ serve(async (req: Request) => {
     }
     const tenantId = profile.tenant_id;
 
-    // Always include tenant_id so RLS allows realtime broadcast to the client
     const log = async (stage: string, message: string, success: boolean) => {
-      await db.from("provision_logs").insert({ router_id: routerId, tenant_id: tenantId, stage, message, success }).catch(() => {});
+      try {
+        await db.from("provision_logs").insert({ router_id: routerId, tenant_id: tenantId, stage, message, success });
+      } catch (_) { /* ignore log errors */ }
     };
 
     const { data: router } = await db.from("routers").select("*").eq("id", routerId).eq("tenant_id", tenantId).maybeSingle();
