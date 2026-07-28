@@ -281,21 +281,24 @@ function RoutersPage() {
     enabled: !!tenantId,
   });
 
-  // Real live session count from hotspot_sessions + pppoe_sessions
+  // Real live session count — queries hotspot_sessions + pppoe_sessions if they exist
   const liveSessionsQuery = useQuery({
     queryKey: ["live-sessions", tenantId],
     queryFn: async () => {
       if (!tenantId) return 0;
-      const [hs, ppp] = await Promise.all([
+      const [hs, ppp] = await Promise.allSettled([
         supabase.from("hotspot_sessions" as any).select("id", { count: "exact", head: true })
           .eq("tenant_id", tenantId).eq("status", "active"),
         supabase.from("pppoe_sessions" as any).select("id", { count: "exact", head: true })
           .eq("tenant_id", tenantId).eq("status", "active"),
       ]);
-      return (hs.count ?? 0) + (ppp.count ?? 0);
+      const hsCount = hs.status === "fulfilled" && !hs.value.error ? (hs.value.count ?? 0) : 0;
+      const pppCount = ppp.status === "fulfilled" && !ppp.value.error ? (ppp.value.count ?? 0) : 0;
+      return hsCount + pppCount;
     },
     enabled: !!tenantId,
     refetchInterval: 30_000,
+    retry: false,
   });
   const liveSessions = liveSessionsQuery.data ?? 0;
 
