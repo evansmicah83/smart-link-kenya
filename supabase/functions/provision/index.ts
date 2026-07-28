@@ -23,22 +23,25 @@ serve(async (req: Request) => {
     .maybeSingle();
 
   if (error || !router) {
-    return new Response(`:log warning "SmartlinkNet: token not found (${error?.message})"`, { status: 410, headers: { "content-type": "text/plain" } });
+    return new Response(`:log warning "SmartlinkNet: token not found"`, { status: 410, headers: { "content-type": "text/plain" } });
   }
 
+  // Auto-extend if expired instead of rejecting
   const expires = router.provision_token_expires_at ? new Date(router.provision_token_expires_at) : null;
   if (expires && expires < new Date()) {
-    // Auto-extend by 24h instead of rejecting
     await supabase.from("routers").update({
       provision_token_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
     }).eq("id", router.id);
   }
 
+  // Mark as provisioning — keep token so callback can find the router
   await supabase.from("routers").update({ status: "provisioning" }).eq("id", router.id);
 
   const safeName = (router.name || "MikroTik").replace(/"/g, '\\"');
   const bridgeName = `bridge-${safeName.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
-  const callbackUrl = `https://${new URL(SUPABASE_URL).host}/functions/v1/provision-callback?token=${encodeURIComponent(token)}&stage=identity_set`;
+
+  // Pass router id in callback so it doesn't need to look up by token
+  const callbackUrl = `https://${new URL(SUPABASE_URL).host}/functions/v1/provision-callback?router_id=${router.id}&stage=identity_set`;
 
   const script = [
     `/system identity set name="${safeName}"`,

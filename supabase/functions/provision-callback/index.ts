@@ -5,31 +5,32 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
 serve(async (req: Request) => {
-  // RouterOS will call this with /functions/v1/provision-callback?token=...&stage=...
   try {
     const url = new URL(req.url);
-    const token = url.searchParams.get('token') || '';
-    const stage = url.searchParams.get('stage') || '';
-    if (!token) return new Response('missing token', { status: 400, headers: { 'content-type': 'text/plain' } });
+    const routerId = url.searchParams.get("router_id") || "";
+    const stage = url.searchParams.get("stage") || "unknown";
+
+    if (!routerId) return new Response("missing router_id", { status: 400, headers: { "content-type": "text/plain" } });
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { global: { fetch } });
 
-    const { data: router, error: selErr } = await supabase
-      .from('routers')
-      .select('id')
-      .eq('provision_token', token)
-      .maybeSingle();
+    await supabase.from("routers").update({
+      status: "online",
+      last_seen: new Date().toISOString(),
+      provision_token: null,
+      provision_token_expires_at: null,
+    }).eq("id", routerId);
 
-    if (selErr || !router) return new Response('not found', { status: 404, headers: { 'content-type': 'text/plain' } });
+    await supabase.from("provision_logs").insert([{
+      router_id: routerId,
+      stage,
+      message: `Router came online at stage=${stage}`,
+      success: true,
+    }]);
 
-    // Insert a provision log row
-    const message = `callback received for stage=${stage}`;
-    await supabase.from('provision_logs').insert([{ router_id: router.id, stage: stage || 'unknown', message, success: true }]);
-
-    // Minimal plain-text 200 OK so RouterOS fetch() doesn't error
-    return new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } });
+    return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
   } catch (err) {
     console.error(err);
-    return new Response('error', { status: 500, headers: { 'content-type': 'text/plain' } });
+    return new Response("error", { status: 500, headers: { "content-type": "text/plain" } });
   }
 });
