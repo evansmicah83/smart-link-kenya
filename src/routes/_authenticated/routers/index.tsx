@@ -314,7 +314,7 @@ function RoutersPage() {
   ), [brand, selectedServices, bridgePort, customSubnet, subnetValue]);
 
   const bridgeName = provisioningTemplate.bridgeName;
-  const saasDomain = window.location.origin;
+  const saasDomain = import.meta.env.VITE_SUPABASE_URL;
   const provisionScript = provisionToken
     ? `/tool fetch mode=https url=\"${saasDomain}/functions/v1/provision?token=${encodeURIComponent(provisionToken)}\" dst-path=smartlinknet-provision.rsc;:delay 2s;/import smartlinknet-provision.rsc;`
     : "";
