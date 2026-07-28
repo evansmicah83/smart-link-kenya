@@ -8,6 +8,11 @@ serve(async (req: Request) => {
   if (req.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
 
   try {
+    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+      // Helpful server-side diagnostic message. Do not include secrets.
+      return new Response('Server misconfigured: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY', { status: 500, headers: { "content-type": "text/plain" } });
+    }
+
     const url = new URL(req.url);
     const token = url.searchParams.get("token") || "";
     if (!token) {
