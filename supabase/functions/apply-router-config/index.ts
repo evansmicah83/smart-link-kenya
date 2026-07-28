@@ -38,7 +38,40 @@ serve(async (req: Request) => {
     const { data: router, error: selErr } = await supabase.from("routers").select("*").eq("id", routerId).eq("tenant_id", profile.tenant_id).maybeSingle();
     if (selErr || !router) return new Response(JSON.stringify({ error: "Router not found" }), { status: 404, headers: { ...CORS, "content-type": "application/json" } });
 
-    // Mark router active and log completion
+    const tenantId = profile.tenant_id;
+
+    // 1. Resolve real RADIUS host — find any active radius_server for this tenant that has a real host
+    const { data: realRadius } = await supabase
+      .from("radius_servers")
+      .select("id, host")
+      .eq("tenant_id", tenantId)
+      .eq("is_active", true)
+      .neq("host", "pending")
+      .order("priority", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    // 2. Fix any pending radius_server records for this tenant with the real host
+    if (realRadius?.host) {
+      await supabase
+        .from("radius_servers")
+        .update({ host: realRadius.host, is_healthy: true })
+        .eq("tenant_id", tenantId)
+        .eq("host", "pending");
+    }
+
+    // 3. Ensure nas_devices record has correct nas_identifier (= router name, what MikroTik sends)
+    await supabase
+      .from("nas_devices")
+      .update({
+        nas_identifier: router.provisioning_identity || router.name,
+        name: router.provisioning_identity || router.name,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("router_id", routerId);
+
+    // 4. Mark router active
     await supabase.from("routers").update({
       status: "active",
       provisioned_at: new Date().toISOString(),
@@ -47,7 +80,7 @@ serve(async (req: Request) => {
     await supabase.from("provision_logs").insert([{
       router_id: routerId,
       stage: "complete",
-      message: "Router configuration applied successfully",
+      message: `Router configured — services: ${(router.services || []).join(", ") || "none"} | RADIUS: ${realRadius?.host || "pending"}`,
       success: true,
     }]);
 

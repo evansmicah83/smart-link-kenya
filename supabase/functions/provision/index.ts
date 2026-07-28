@@ -81,6 +81,11 @@ serve(async (req: Request) => {
   const portalLoginPage = `${APP_URL}/portal?isp=${ispSlug}&mac=\$(mac)&ip=\$(ip)&url=\$(link-orig)&dst=\$(dst-ip)`;
   const callbackUrl = `https://${new URL(SUPABASE_URL).host}/functions/v1/provision-callback?router_id=${router.id}&stage=complete`;
 
+  // Helper: wrap a command so it never halts the script on error
+  const safe = (cmd: string) => `:do { ${cmd} } on-error={}`;
+
+  const radiusService = hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp";
+
   const lines: string[] = [
     `# SmartLinkNet — Auto-provisioning script`,
     `# Router: ${safeName} | Tenant: ${tenant?.name ?? ispSlug}`,
@@ -89,95 +94,95 @@ serve(async (req: Request) => {
     `# 1. Identity`,
     `/system identity set name="${safeName}"`,
     ``,
-    `# 2. Bridge`,
-    `:if ([:len [/interface bridge find name=${bridgeName}]] = 0) do={ /interface bridge add name=${bridgeName} protocol-mode=rstp comment="SmartLinkNet" }`,
+    `# 2. Bridge — create only if missing`,
+    safe(`/interface bridge add name=${bridgeName} protocol-mode=rstp comment="SmartLinkNet"`),
   ];
 
-  // Bridge ports — remove first to avoid "already added" error
+  // Bridge ports — always remove from any bridge first, then add to ours
   for (const port of bridgePorts) {
-    lines.push(`/interface bridge port remove [find interface=${port}]`);
-    lines.push(`/interface bridge port add bridge=${bridgeName} interface=${port}`);
+    lines.push(safe(`/interface bridge port remove [find interface=${port}]`));
+    lines.push(safe(`/interface bridge port add bridge=${bridgeName} interface=${port}`));
   }
 
   lines.push(
     ``,
-    `# 3. Gateway IP on bridge`,
-    `/ip address remove [find interface=${bridgeName} comment="SmartLinkNet gateway"]`,
-    `/ip address add address=${bridgeAddress} interface=${bridgeName} comment="SmartLinkNet gateway"`,
+    `# 3. Gateway IP`,
+    safe(`/ip address remove [find interface=${bridgeName}]`),
+    safe(`/ip address add address=${bridgeAddress} interface=${bridgeName} comment="SmartLinkNet gateway"`),
     ``,
     `# 4. IP Pool`,
-    `/ip pool remove [find name=${companySlug}-pool]`,
+    safe(`/ip pool remove [find name=${companySlug}-pool]`),
     `/ip pool add name=${companySlug}-pool ranges=${poolStart}-${poolEnd}`,
     ``,
     `# 5. DHCP Server`,
-    `/ip dhcp-server remove [find name=${companySlug}-dhcp]`,
+    safe(`/ip dhcp-server remove [find name=${companySlug}-dhcp]`),
     `/ip dhcp-server add name=${companySlug}-dhcp interface=${bridgeName} address-pool=${companySlug}-pool lease-time=1h disabled=no`,
-    `/ip dhcp-server network remove [find address=${subnet}]`,
+    safe(`/ip dhcp-server network remove [find]`),
     `/ip dhcp-server network add address=${subnet} gateway=${gatewayIp} dns-server=8.8.8.8,8.8.4.4`,
     ``,
-    `# 6. NAT`,
-    `/ip firewall nat remove [find comment="SmartLinkNet NAT"]`,
-    `/ip firewall nat add chain=srcnat out-interface-list=WAN action=masquerade comment="SmartLinkNet NAT"`,
+    `# 6. NAT — detect uplink (first ethernet not in bridge)`,
+    `:local uplinkName "ether1"`,
+    `:foreach iface in=[/interface ethernet find] do={ :local n [/interface ethernet get $iface name]; :if ([:len [/interface bridge port find interface=$n]] = 0) do={ :set uplinkName $n } }`,
+    safe(`/ip firewall nat remove [find comment="SmartLinkNet NAT"]`),
+    `/ip firewall nat add chain=srcnat out-interface=$uplinkName action=masquerade comment="SmartLinkNet NAT"`,
     ``,
     `# 7. DNS`,
     `/ip dns set allow-remote-requests=yes servers=8.8.8.8,8.8.4.4`,
   );
 
-  // RADIUS — only add if we have a real host
   if (radiusHost) {
     lines.push(
       ``,
       `# 8. RADIUS`,
-      `/radius remove [find comment="SmartLinkNet"]`,
-      `/radius add service=${hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp"} address=${radiusHost} secret=${radiusSecret} authentication-port=${radiusAuthPort} accounting-port=${radiusAcctPort} timeout=3000ms comment="SmartLinkNet"`,
+      safe(`/radius remove [find comment="SmartLinkNet"]`),
+      `/radius add service=${radiusService} address=${radiusHost} secret=${radiusSecret} authentication-port=${radiusAuthPort} accounting-port=${radiusAcctPort} timeout=3000ms comment="SmartLinkNet"`,
     );
   }
 
-  // Hotspot
   if (hasHotspot) {
     lines.push(
       ``,
       `# 9. Hotspot`,
-      `/ip hotspot remove [find name=${companySlug}-hotspot]`,
-      `/ip hotspot profile remove [find name=${companySlug}-hs-profile]`,
+      safe(`/ip hotspot disable [find name=${companySlug}-hotspot]`),
+      safe(`/ip hotspot remove [find name=${companySlug}-hotspot]`),
+      safe(`/ip hotspot profile remove [find name=${companySlug}-hs-profile]`),
       `/ip hotspot profile add name=${companySlug}-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d ${radiusHost ? "use-radius=yes accounting=yes" : ""} login-page="${portalLoginPage}"`,
       `/ip hotspot add name=${companySlug}-hotspot interface=${bridgeName} address-pool=${companySlug}-pool profile=${companySlug}-hs-profile disabled=no`,
       ``,
-      `# Walled Garden — allow portal before login`,
-      `/ip hotspot walled-garden remove [find comment="SmartLinkNet portal"]`,
-      `/ip hotspot walled-garden remove [find comment="Supabase"]`,
-      `/ip hotspot walled-garden remove [find comment="M-Pesa"]`,
-      `/ip hotspot walled-garden remove [find comment="M-Pesa STK"]`,
-      `/ip hotspot walled-garden remove [find comment="HTTPS"]`,
+      `# Walled Garden`,
+      safe(`/ip hotspot walled-garden remove [find comment~"SmartLinkNet"]`),
+      safe(`/ip hotspot walled-garden remove [find comment~"Supabase"]`),
+      safe(`/ip hotspot walled-garden remove [find comment~"M-Pesa"]`),
+      safe(`/ip hotspot walled-garden remove [find comment~"HTTPS"]`),
       `/ip hotspot walled-garden add dst-host=smart-link-kenya.vercel.app comment="SmartLinkNet portal"`,
       `/ip hotspot walled-garden add dst-host=*.supabase.co comment="Supabase"`,
       `/ip hotspot walled-garden add dst-host=*.safaricom.com comment="M-Pesa"`,
       `/ip hotspot walled-garden add dst-host=mpesa.safaricom.co.ke comment="M-Pesa STK"`,
+      safe(`/ip hotspot walled-garden ip remove [find comment="HTTPS"]`),
       `/ip hotspot walled-garden ip add dst-address=0.0.0.0/0 protocol=tcp dst-port=443 comment="HTTPS"`,
     );
   }
 
-  // PPPoE
   if (hasPppoe) {
     lines.push(
       ``,
       `# 10. PPPoE Server`,
-      `/interface pppoe-server server remove [find name=${companySlug}-pppoe]`,
-      `/ppp profile remove [find name=${companySlug}-pppoe]`,
+      safe(`/interface pppoe-server server disable [find name=${companySlug}-pppoe]`),
+      safe(`/interface pppoe-server server remove [find name=${companySlug}-pppoe]`),
+      safe(`/ppp profile remove [find name=${companySlug}-pppoe comment="SmartLinkNet"]`),
       `/ppp profile add name=${companySlug}-pppoe ${radiusHost ? "use-radius=yes" : ""} comment="SmartLinkNet"`,
       `/interface pppoe-server server add name=${companySlug}-pppoe interface=${bridgeName} default-profile=${companySlug}-pppoe disabled=no`,
     );
   }
 
-  // Heartbeat scheduler
   lines.push(
     ``,
     `# 11. Heartbeat`,
-    `/system scheduler remove [find name=sln-heartbeat]`,
+    safe(`/system scheduler remove [find name=sln-heartbeat]`),
     `/system scheduler add name=sln-heartbeat interval=5m on-event=":do { /tool fetch mode=https url=\\"${APP_URL}/api/heartbeat?router=${router.id}\\" keep-result=no } on-error={}" comment="SmartLinkNet"`,
     ``,
     `# 12. Report back`,
-    `/tool fetch mode=https url="${callbackUrl}" keep-result=no`,
+    safe(`/tool fetch mode=https url="${callbackUrl}" keep-result=no`),
     `:log info "SmartLinkNet: provisioning complete for ${safeName}"`,
   );
 
