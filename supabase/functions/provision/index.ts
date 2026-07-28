@@ -90,11 +90,12 @@ serve(async (req: Request) => {
     `/system identity set name="${safeName}"`,
     ``,
     `# 2. Bridge`,
-    `/interface bridge add name=${bridgeName} protocol-mode=rstp comment="SmartLinkNet"`,
+    `:if ([:len [/interface bridge find name=${bridgeName}]] = 0) do={ /interface bridge add name=${bridgeName} protocol-mode=rstp comment="SmartLinkNet" }`,
   ];
 
-  // Bridge ports
+  // Bridge ports — remove first to avoid "already added" error
   for (const port of bridgePorts) {
+    lines.push(`/interface bridge port remove [find interface=${port}]`);
     lines.push(`/interface bridge port add bridge=${bridgeName} interface=${port}`);
   }
 

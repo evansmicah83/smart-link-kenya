@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/auth";
 import { useBranding } from "@/lib/branding";
 import { buildProvisioningTemplate } from "@/lib/provisioning/templates";
 
-const SUPABASE_FUNCTIONS = `${import.meta.env.VITE_SUPABASE_URL || "https://tghaarhofriakwgvqmpm.supabase.co"}/functions/v1`;
+const SUPABASE_FUNCTIONS = "https://tghaarhofriakwgvqmpm.supabase.co/functions/v1";
 
 export const Route = createFileRoute("/_authenticated/routers/")({
   component: RoutersPage,
@@ -314,7 +314,7 @@ function RoutersPage() {
   ), [brand, selectedServices, bridgePort, customSubnet, subnetValue]);
 
   const bridgeName = provisioningTemplate.bridgeName;
-  const saasDomain = import.meta.env.VITE_SUPABASE_URL || "https://tghaarhofriakwgvqmpm.supabase.co";
+  const saasDomain = "https://tghaarhofriakwgvqmpm.supabase.co";
   const provisionScript = provisionToken
     ? `/tool fetch mode=https url=\"${saasDomain}/functions/v1/provision?token=${encodeURIComponent(provisionToken)}\" dst-path=smartlinknet-provision.rsc;:delay 2s;/import smartlinknet-provision.rsc;`
     : "";
