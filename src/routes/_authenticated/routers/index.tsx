@@ -204,7 +204,7 @@ function RoutersPage() {
   const [viewTab, setViewTab] = useState<"details" | "scripts" | "diagnostics">("details");
   const [serverIp, setServerIp] = useState<string>("");
   const [provisionToken, setProvisionToken] = useState<string | null>(null);
-  const [showTokenModal, setShowTokenModal] = useState(false);
+  const [creatingRouter, setCreatingRouter] = useState(false);
      
   const queryClient = useQueryClient();
   const realtimeChannelRef = useRef<any | null>(null);
@@ -1725,49 +1725,6 @@ function RoutersPage() {
         <BrandFooter />
       </div>
 
-      {/* ── Provision Token Modal ── */}
-      {showTokenModal && (
-        <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-          onClick={(e) => { if (e.target === e.currentTarget) { setShowTokenModal(false); setStep(2); } }}
-        >
-          <div className="bg-card rounded-2xl border border-border p-6 w-full max-w-md">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-bold">Provision Token</h3>
-              <button
-                onClick={() => { setShowTokenModal(false); setStep(2); }}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground mb-4">
-              Copy this token and keep it safe. It will be used by the router during provisioning.
-            </p>
-            <div className="relative rounded-xl border border-border bg-background px-4 py-3 mb-3 font-mono text-sm break-all">
-              {provisionToken ?? "—"}
-              <button
-                onClick={() => {
-                  if (provisionToken) {
-                    navigator.clipboard.writeText(provisionToken);
-                    toast.success("Token copied");
-                  }
-                }}
-                className="absolute top-2 right-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg px-2 py-1 bg-background transition-colors"
-              >
-                <Copy className="w-3 h-3" /> Copy
-              </button>
-            </div>
-            <p className="text-xs text-amber-600 dark:text-amber-400 font-medium mb-5">⚠ This code won't be shown again.</p>
-            <button
-              onClick={() => { setShowTokenModal(false); setStep(2); }}
-              className="w-full rounded-full bg-primary hover:bg-primary/90 text-primary-foreground py-2.5 text-sm font-semibold transition-colors"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
 
       <div className="fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur-sm border-t border-border px-4 sm:px-6 py-3 sm:py-4">
         <div className="w-full max-w-xl lg:max-w-2xl mx-auto flex items-center justify-between gap-3">
@@ -1821,6 +1778,7 @@ function RoutersPage() {
                 onClick={async () => {
                   if (!identity.trim()) { toast.error("Enter a router identity"); return; }
                   if (!tenantId) { toast.error("No workspace found"); return; }
+                  setCreatingRouter(true);
                   const provSlug = `${tenantId}-${identity.trim().toLowerCase().replace(/\s+/g, "-")}`;
                   const { data, error } = await supabase.from("routers").insert({
                     tenant_id: tenantId,
@@ -1857,11 +1815,13 @@ function RoutersPage() {
                     toast.error(`Could not generate provision token: ${err.message}`);
                     setProvisionToken(null);
                   }
-                  setShowTokenModal(true);
+                  setCreatingRouter(false);
+                  setStep(2);
                 }}
-                className="rounded-full bg-primary hover:bg-primary/90 text-primary-foreground px-5 sm:px-6 py-2.5 text-sm font-semibold transition-colors"
+                disabled={creatingRouter}
+                className="rounded-full bg-primary hover:bg-primary/90 text-primary-foreground px-5 sm:px-6 py-2.5 text-sm font-semibold transition-colors disabled:opacity-70 flex items-center gap-2"
               >
-                Continue →
+                {creatingRouter ? <><RefreshCw className="w-4 h-4 animate-spin" />Setting up...</> : "Continue →"}
               </button>
             </>
           ) : (
