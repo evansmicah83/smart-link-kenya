@@ -544,18 +544,18 @@ function RoutersPage() {
       }
       const safetyTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
       const channel = supabase.channel(`provision-${routerId}`)
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "provision_logs", filter: `router_id=eq.${routerId}` }, (payload) => {
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "provision_logs", filter: `tenant_id=eq.${tenantId}` }, (payload) => {
           const row = (payload as any).new;
-          if (!row) return;
+          if (!row || row.router_id !== routerId) return;
           addLog(row.message || row.stage || "log", row.success ? "success" : "error");
           if (row.stage === "complete") {
             if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
             setApplyDone(true);
           }
         })
-        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "routers", filter: `id=eq.${routerId}` }, (payload) => {
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "routers", filter: `tenant_id=eq.${tenantId}` }, (payload) => {
           const row = (payload as any).new;
-          if (!row) return;
+          if (!row || row.id !== routerId) return;
           if (row.status === "active") { addLog("Router is active — subscribers can now be added", "success"); if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current); setApplyDone(true); }
           if (row.status === "failed") { addLog("Router provisioning failed", "error"); if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current); setApplyDone(true); }
         })
@@ -611,15 +611,16 @@ function RoutersPage() {
         const icon = level === "success" ? "✓" : level === "error" ? "✕" : level === "warn" ? "⚠" : "•";
         setLogLines((prev) => [...prev, { ts, level, icon, message }]);
       };
-      const channel = supabase.channel(`provision-${routerId}`)
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "provision_logs", filter: `router_id=eq.${routerId}` }, (payload) => {
+      const channel = supabase.channel(`provision-reinvoke-${routerId}`)
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "provision_logs", filter: `tenant_id=eq.${tenantId}` }, (payload) => {
           const row = (payload as any).new;
-          if (!row) return;
+          if (!row || row.router_id !== routerId) return;
           addLog(row.message || row.stage || "log", row.success ? "success" : "error");
+          if (row.stage === "complete") setApplyDone(true);
         })
-        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "routers", filter: `id=eq.${routerId}` }, (payload) => {
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "routers", filter: `tenant_id=eq.${tenantId}` }, (payload) => {
           const row = (payload as any).new;
-          if (!row) return;
+          if (!row || row.id !== routerId) return;
           if (row.status === "active") { addLog("Router is active — subscribers can now be added", "success"); setApplyDone(true); }
           if (row.status === "failed") { addLog("Router provisioning failed", "error"); setApplyDone(true); }
         })
