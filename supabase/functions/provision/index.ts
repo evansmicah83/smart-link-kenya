@@ -24,7 +24,6 @@ serve(async (req: Request) => {
     return new Response(':log warning "SmartLinkNet: token not found"', { status: 410, headers: { "content-type": "text/plain" } });
   }
 
-  // Auto-extend token if expired
   const expires = router.provision_token_expires_at ? new Date(router.provision_token_expires_at) : null;
   if (expires && expires < new Date()) {
     await supabase.from("routers").update({
@@ -34,11 +33,9 @@ serve(async (req: Request) => {
 
   await supabase.from("routers").update({ status: "provisioning" }).eq("id", router.id);
 
-  // Tenant info
   const { data: tenant } = await supabase
     .from("tenants").select("slug, name").eq("id", router.tenant_id).maybeSingle();
 
-  // RADIUS server
   const { data: radiusServer } = await supabase
     .from("radius_servers")
     .select("host, auth_port, acct_port, shared_secret")
@@ -66,7 +63,6 @@ serve(async (req: Request) => {
     ? router.bridge_ports
     : [router.bridge_port || "ether2"];
 
-  // Explicit uplink from wizard step 3, or fall back to ether1
   const uplinkInterface: string = router.uplink_interface || "ether1";
 
   const services: string[] = router.services || [];
@@ -82,18 +78,15 @@ serve(async (req: Request) => {
 
   const portalLoginPage = `${APP_URL}/portal?isp=${ispSlug}&mac=\\$(mac)&ip=\\$(ip)&url=\\$(link-orig)&dst=\\$(dst-ip)`;
 
-  // Generate or reuse API credentials
   const apiUsername = (router.api_username && router.api_username !== "admin") ? router.api_username : "sln-api";
   const apiPassword = router.api_password || Array.from(
     crypto.getRandomValues(new Uint8Array(16))
   ).map((b: number) => b.toString(16).padStart(2, "0")).join("");
 
-  // Persist credentials before script runs
   await supabase.from("routers").update({ api_username: apiUsername, api_password: apiPassword }).eq("id", router.id);
 
   const supabaseHost = new URL(SUPABASE_URL).host;
   const callbackUrl = `https://${supabaseHost}/functions/v1/provision-callback?router_id=${router.id}&stage=complete`;
-  // Poll URL: router calls this every minute to get commands and report heartbeat
   const pollUrl = `https://${supabaseHost}/functions/v1/router-poll?router_id=${router.id}&token=${apiPassword}`;
 
   const safe = (cmd: string) => `:do { ${cmd} } on-error={}`;
@@ -111,7 +104,6 @@ serve(async (req: Request) => {
     safe(`/interface bridge add name=${bridgeName} protocol-mode=rstp comment="SmartLinkNet"`),
   ];
 
-  // Bridge ports
   for (const port of bridgePorts) {
     lines.push(safe(`/interface bridge port remove [find interface=${port}]`));
     lines.push(safe(`/interface bridge port add bridge=${bridgeName} interface=${port} comment="SmartLinkNet"`));
@@ -156,7 +148,7 @@ serve(async (req: Request) => {
       `/ip hotspot profile add name=${companySlug}-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d use-radius=yes accounting=yes login-page="${portalLoginPage}"`,
       `/ip hotspot add name=${companySlug}-hotspot interface=${bridgeName} address-pool=${companySlug}-pool profile=${companySlug}-hs-profile disabled=no`,
       ``,
-      `# Walled Garden — allow portal and payment URLs without login`,
+      `# Walled Garden`,
       safe(`/ip hotspot walled-garden remove [find comment~"SmartLinkNet"]`),
       safe(`/ip hotspot walled-garden remove [find comment~"Supabase"]`),
       safe(`/ip hotspot walled-garden remove [find comment~"M-Pesa"]`),
@@ -181,25 +173,25 @@ serve(async (req: Request) => {
     );
   }
 
+  // Scheduler on-event must be a single quoted string — no line continuations in .rsc
+  const pollOnEvent = `:do { /tool fetch mode=https url="${pollUrl}" http-method=post http-data="{}" dst-path=sln-poll.json keep-result=yes } on-error={}`;
+  const heartbeatOnEvent = `:do { /tool fetch mode=https url="${APP_URL}/api/heartbeat?router=${router.id}" keep-result=no } on-error={}`;
+
   lines.push(
     ``,
-    `# 11. API user and port — required for SmartLinkNet management`,
+    `# 11. API user and port`,
     `/ip service set api port=8728 disabled=no`,
     `/ip service set api-ssl disabled=yes`,
     safe(`/user remove [find name="${apiUsername}"]`),
     `/user add name="${apiUsername}" password="${apiPassword}" group=full comment="SmartLinkNet"`,
     ``,
-    `# 12. Poll scheduler — router calls cloud every 1 min for commands (NAT-safe)`,
+    `# 12. Poll scheduler — NAT-safe pull model`,
     safe(`/system scheduler remove [find name=sln-poll]`),
-    `/system scheduler add name=sln-poll interval=1m start-time=startup \\`,
-    `  on-event=":do { /tool fetch mode=https url=\\"${pollUrl}\\" http-method=post http-data=\\"\\" dst-path=sln-poll.json keep-result=yes } on-error={}" \\`,
-    `  comment="SmartLinkNet"`,
+    `/system scheduler add name=sln-poll interval=1m start-time=startup on-event="${pollOnEvent}" comment="SmartLinkNet"`,
     ``,
-    `# 13. Heartbeat scheduler — separate 5-min status ping`,
+    `# 13. Heartbeat scheduler`,
     safe(`/system scheduler remove [find name=sln-heartbeat]`),
-    `/system scheduler add name=sln-heartbeat interval=5m start-time=startup \\`,
-    `  on-event=":do { /tool fetch mode=https url=\\"${APP_URL}/api/heartbeat?router=${router.id}\\" keep-result=no } on-error={}" \\`,
-    `  comment="SmartLinkNet"`,
+    `/system scheduler add name=sln-heartbeat interval=5m start-time=startup on-event="${heartbeatOnEvent}" comment="SmartLinkNet"`,
     ``,
     `# 14. Report provisioning complete`,
     safe(`/tool fetch mode=https url="${callbackUrl}" keep-result=no`),
