@@ -70,8 +70,9 @@ serve(async (req: Request) => {
   const hasPppoe = services.includes("pppoe");
 
   const appHost = new URL(APP_URL).hostname;
-  const radiusHost = (radiusServer?.host && radiusServer.host !== "pending") ? radiusServer.host : appHost;
-  const radiusSecret = radiusServer?.shared_secret || "SmartLinkNet-Public-Fallback";
+  const hasRealRadius = radiusServer?.host && radiusServer.host !== "pending" && /^\d+\.\d+\.\d+\.\d+$/.test(radiusServer.host);
+  const radiusHost = hasRealRadius ? radiusServer!.host : null;
+  const radiusSecret = radiusServer?.shared_secret || "SmartLinkNet";
   const radiusAuthPort = radiusServer?.auth_port || 1812;
   const radiusAcctPort = radiusServer?.acct_port || 1813;
   const radiusService = hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp";
@@ -137,8 +138,12 @@ const apiUsername = (router.api_username && router.api_username !== "admin") ? r
     "",
     "# 8. RADIUS",
     safe('/radius remove [find comment="SmartLinkNet"]'),
-    "/radius add service=" + radiusService + " address=" + radiusHost + " secret=" + radiusSecret + " authentication-port=" + radiusAuthPort + " accounting-port=" + radiusAcctPort + ' timeout=3000ms comment="SmartLinkNet"',
-    "/radius incoming set accept=yes port=3799",
+    ...(radiusHost ? [
+      "/radius add service=" + radiusService + " address=" + radiusHost + " secret=" + radiusSecret + " authentication-port=" + radiusAuthPort + " accounting-port=" + radiusAcctPort + ' timeout=3000ms comment="SmartLinkNet"',
+      "/radius incoming set accept=yes port=3799",
+    ] : [
+      '# RADIUS: no server configured yet — add via SmartLinkNet dashboard',
+    ]),
   );
 
   if (hasHotspot) {
@@ -151,7 +156,7 @@ const apiUsername = (router.api_username && router.api_username !== "admin") ? r
       safe("/ip hotspot disable [find name=" + companySlug + "-hotspot]"),
       safe("/ip hotspot remove [find name=" + companySlug + "-hotspot]"),
       safe("/ip hotspot profile remove [find name=" + companySlug + "-hs-profile]"),
-      "/ip hotspot profile add name=" + companySlug + "-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d use-radius=yes accounting=yes login-page=\"" + staticPortalUrl + "\"",
+      "/ip hotspot profile add name=" + companySlug + "-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d" + (radiusHost ? " use-radius=yes accounting=yes" : "") + " login-page=\"" + staticPortalUrl + "\"",
       "/ip hotspot add name=" + companySlug + "-hotspot interface=" + bridgeName + " address-pool=" + companySlug + "-pool profile=" + companySlug + "-hs-profile disabled=no",
       "",
       "# Walled Garden",
@@ -174,7 +179,7 @@ const apiUsername = (router.api_username && router.api_username !== "admin") ? r
       safe("/interface pppoe-server server disable [find name=" + companySlug + "-pppoe]"),
       safe("/interface pppoe-server server remove [find name=" + companySlug + "-pppoe]"),
       safe("/ppp profile remove [find name=" + companySlug + "-pppoe]"),
-      '/ppp profile add name=' + companySlug + '-pppoe use-radius=yes comment="SmartLinkNet"',
+      '/ppp profile add name=' + companySlug + '-pppoe' + (radiusHost ? ' use-radius=yes' : '') + ' comment="SmartLinkNet"',
       "/interface pppoe-server server add name=" + companySlug + "-pppoe interface=" + bridgeName + " default-profile=" + companySlug + "-pppoe disabled=no",
     );
   }
