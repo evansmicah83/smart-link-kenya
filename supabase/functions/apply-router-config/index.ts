@@ -63,17 +63,21 @@ serve(async (req: Request) => {
     };
 
     // ── 1. Resolve RADIUS ──────────────────────────────────────────────────
-    // Resolve Supabase IP via DNS-over-HTTPS for RouterOS compatibility
+    // Dynamically resolve the hosting IP via DoH — works regardless of where system is deployed
     const supabaseHost = new URL(SUPABASE_URL).host;
     let supabaseIp: string | null = null;
-    try {
-      const r = await fetch("https://cloudflare-dns.com/dns-query?name=" + supabaseHost + "&type=A", {
-        headers: { accept: "application/dns-json" },
-      });
-      const j = await r.json();
-      const a = j?.Answer?.find((x: any) => x.type === 1);
-      supabaseIp = a?.data ?? null;
-    } catch { /* ignore */ }
+    for (const url of [
+      "https://cloudflare-dns.com/dns-query?name=" + supabaseHost + "&type=A",
+      "https://dns.google/resolve?name=" + supabaseHost + "&type=A",
+    ]) {
+      try {
+        const r = await fetch(url, { headers: { accept: "application/dns-json" } });
+        if (!r.ok) continue;
+        const j = await r.json();
+        const a = j?.Answer?.find((x: any) => x.type === 1);
+        if (a?.data) { supabaseIp = a.data; break; }
+      } catch { continue; }
+    }
 
     let { data: realRadius } = await db.from("radius_servers")
       .select("id, host, auth_port, acct_port, shared_secret")
