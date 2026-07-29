@@ -219,11 +219,11 @@ const lines: string[] = [
     lines.push(
       "",
       "# 10. PPPoE Server",
-      safe("/interface pppoe-server server disable [find name=" + companySlug + "-pppoe]"),
-      safe("/interface pppoe-server server remove [find name=" + companySlug + "-pppoe]"),
+      safe("/interface pppoe-server server disable [find service-name=" + companySlug + "-pppoe]"),
+      safe("/interface pppoe-server server remove [find service-name=" + companySlug + "-pppoe]"),
       safe("/ppp profile remove [find name=" + companySlug + "-pppoe]"),
       '/ppp profile add name=' + companySlug + '-pppoe comment="SmartLinkNet"',
-      "/interface pppoe-server server add name=" + companySlug + "-pppoe interface=" + bridgeName + " default-profile=" + companySlug + "-pppoe disabled=no",
+      "/interface pppoe-server server add service-name=" + companySlug + "-pppoe interface=" + bridgeName + " default-profile=" + companySlug + "-pppoe disabled=no",
     );
   }
 
