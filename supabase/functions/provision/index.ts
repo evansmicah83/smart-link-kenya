@@ -137,9 +137,7 @@ serve(async (req: Request) => {
   const pollOnEvent = ":do { /tool fetch mode=https url='" + pollUrl + "' http-method=post http-data='{}' dst-path=sln-poll.json keep-result=yes } on-error={}";
   const heartbeatOnEvent = ":do { /tool fetch mode=https url='" + heartbeatUrl + "' keep-result=no } on-error={}";
 
-  const staticPortalUrl = APP_URL + "/portal?isp=" + ispSlug;
-
-  const lines: string[] = [
+const lines: string[] = [
     "# SmartLinkNet -- Auto-provisioning script",
     "# Router: " + safeName + " | Tenant: " + (tenant?.name ?? ispSlug),
     "# Generated: " + new Date().toISOString(),
@@ -201,7 +199,6 @@ serve(async (req: Request) => {
       safe("/ip hotspot remove [find name=" + companySlug + "-hotspot]"),
       safe("/ip hotspot profile remove [find name=" + companySlug + "-hs-profile]"),
       "/ip hotspot profile add name=" + companySlug + "-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d" + (hasRadius ? " use-radius=yes" : ""),
-      "/ip hotspot profile set [find name=" + companySlug + "-hs-profile] login-page=\"" + staticPortalUrl + "\"",
       "/ip hotspot add name=" + companySlug + "-hotspot interface=" + bridgeName + " address-pool=" + companySlug + "-pool profile=" + companySlug + "-hs-profile disabled=no",
       "",
       "# Walled Garden",
