@@ -293,8 +293,21 @@ async function executeJob(sb: any, job: any): Promise<void> {
       const { router_id } = payload;
       if (!router_id) return;
       try {
-        // Invoke the apply-router-config function as the service (service-mode supported)
-        await sb.functions.invoke("apply-router-config", { body: { routerId: router_id } });
+        // Call the Edge Function URL directly using SERVICE_ROLE_KEY so the function runs in service-mode
+        const funcUrl = `${Deno.env.get("SUPABASE_URL")?.replace(/\/+$/,")}/functions/v1/apply-router-config`;
+        const svcKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+        const res = await fetch(funcUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${svcKey}`,
+          },
+          body: JSON.stringify({ routerId: router_id }),
+        });
+        if (!res.ok) {
+          const txt = await res.text().catch(() => "");
+          throw new Error(`apply-router-config failed: HTTP ${res.status} ${txt.slice(0,200)}`);
+        }
       } catch (e) {
         // Bubble up error so queue-worker will retry according to backoff
         throw new Error(`apply_router failed: ${e?.message ?? String(e)}`);
