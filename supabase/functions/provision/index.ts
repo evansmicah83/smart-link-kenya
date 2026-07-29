@@ -5,14 +5,23 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const APP_URL = Deno.env.get("APP_URL") || "https://smart-link-kenya.vercel.app";
 
-// Resolve a hostname to its first IPv4 address using Deno's DNS
+// Resolve hostname to IPv4 — falls back to HTTP-based DNS over HTTPS if Deno.resolveDns is unavailable
 async function resolveHostToIp(hostname: string): Promise<string | null> {
+  // Try Deno native DNS first
   try {
-    const records = await Deno.resolveDns(hostname, "A");
-    return records?.[0] ?? null;
-  } catch {
-    return null;
-  }
+    const records = await (Deno as any).resolveDns(hostname, "A");
+    if (records?.[0]) return records[0];
+  } catch { /* not available in this sandbox */ }
+  // Fall back to Cloudflare DNS over HTTPS
+  try {
+    const r = await fetch("https://cloudflare-dns.com/dns-query?name=" + hostname + "&type=A", {
+      headers: { accept: "application/dns-json" },
+    });
+    const j = await r.json();
+    const a = j?.Answer?.find((x: any) => x.type === 1);
+    if (a?.data) return a.data;
+  } catch { /* ignore */ }
+  return null;
 }
 
 serve(async (req: Request) => {

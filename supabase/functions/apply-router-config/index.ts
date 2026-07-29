@@ -63,10 +63,45 @@ serve(async (req: Request) => {
     };
 
     // ── 1. Resolve RADIUS ──────────────────────────────────────────────────
-    const { data: realRadius } = await db.from("radius_servers")
+    // Resolve Supabase IP via DNS-over-HTTPS for RouterOS compatibility
+    const supabaseHost = new URL(SUPABASE_URL).host;
+    let supabaseIp: string | null = null;
+    try {
+      const r = await fetch("https://cloudflare-dns.com/dns-query?name=" + supabaseHost + "&type=A", {
+        headers: { accept: "application/dns-json" },
+      });
+      const j = await r.json();
+      const a = j?.Answer?.find((x: any) => x.type === 1);
+      supabaseIp = a?.data ?? null;
+    } catch { /* ignore */ }
+
+    let { data: realRadius } = await db.from("radius_servers")
       .select("id, host, auth_port, acct_port, shared_secret")
-      .eq("tenant_id", tenantId).eq("is_active", true).neq("host", "pending")
+      .eq("tenant_id", tenantId).eq("is_active", true)
       .order("priority", { ascending: true }).limit(1).maybeSingle();
+
+    // If RADIUS host is pending and we have a real IP now, update it
+    if (realRadius && (realRadius.host === "pending" || !realRadius.host) && supabaseIp) {
+      await db.from("radius_servers").update({ host: supabaseIp }).eq("id", realRadius.id);
+      realRadius = { ...realRadius, host: supabaseIp };
+    }
+
+    // Auto-seed RADIUS if none exists
+    if (!realRadius && supabaseIp) {
+      const sharedSecret = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+        .map((b: number) => b.toString(16).padStart(2, "0")).join("");
+      const { data: seeded } = await db.from("radius_servers").insert({
+        tenant_id: tenantId,
+        name: "SmartLinkNet Cloud RADIUS",
+        host: supabaseIp,
+        auth_port: 443, acct_port: 443,
+        shared_secret: sharedSecret,
+        is_active: true, is_primary: true, is_healthy: true, priority: 1,
+        auth_url: "https://" + supabaseHost + "/functions/v1/radius-auth",
+        acct_url: "https://" + supabaseHost + "/functions/v1/radius-accounting",
+      }).select("id, host, auth_port, acct_port, shared_secret").single();
+      realRadius = seeded;
+    }
 
     // ── 2. Upsert NAS device ───────────────────────────────────────────────
     const nasName = router.provisioning_identity || router.name;
@@ -149,7 +184,7 @@ serve(async (req: Request) => {
     const poolEnd = `${parts[0]}.${parts[1]}.${parts[2]}.254`;
     const bridgePorts: string[] = router.bridge_ports?.length ? router.bridge_ports : [router.bridge_port || "ether2"];
     const uplinkInterface = router.uplink_interface || "ether1";
-    const radiusHost = realRadius?.host && realRadius.host !== "pending" ? realRadius.host : new URL(APP_URL).hostname;
+    const radiusHost = realRadius?.host && realRadius.host !== "pending" ? realRadius.host : (supabaseIp ?? new URL(APP_URL).hostname);
     const radiusSecret = realRadius?.shared_secret || "SmartLinkNet-Public-Fallback";
     const radiusAuthPort = realRadius?.auth_port || 1812;
     const radiusAcctPort = realRadius?.acct_port || 1813;
