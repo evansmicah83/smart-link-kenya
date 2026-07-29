@@ -440,10 +440,14 @@ function RoutersPage() {
     pollRef.current = setInterval(async () => {
       const { data } = await supabase.from("routers").select("status,ip_address").eq("id", routerId).single();
       if (data?.status === "online") {
+        // Router contacted the cloud (provision-callback) — proceed to interface discovery
         setRouterOnline(true);
         setVpnAddress(data.ip_address ?? null);
         setCheckingOnline(false);
         if (pollRef.current) clearInterval(pollRef.current);
+        // Advance the wizard automatically so the ISP can continue with interface selection
+        setStep(3);
+        toast.success("Router is online — discovering interfaces...");
       }
     }, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };

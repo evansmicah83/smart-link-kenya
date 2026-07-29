@@ -42,14 +42,9 @@ serve(async (req: Request) => {
   try {
     const authHeader = req.headers.get("authorization") || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-    if (!token) return new Response(JSON.stringify({ error: "Missing token" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
+    const serviceMode = token === SERVICE_ROLE_KEY;
 
-    const userResp = await fetch(SUPABASE_URL.replace(/\/+$/, "") + "/auth/v1/user", {
-      headers: { Authorization: "Bearer " + token, apikey: ANON_KEY },
-    });
-    if (!userResp.ok) return new Response(JSON.stringify({ error: "Invalid token" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
-    const userId = (await userResp.json())?.id;
-    if (!userId) return new Response(JSON.stringify({ error: "Unable to resolve user" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
+    if (!token) return new Response(JSON.stringify({ error: "Missing token" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
 
     const reqBody = await req.json();
     const { routerId } = reqBody ?? {};
@@ -57,23 +52,45 @@ serve(async (req: Request) => {
 
     const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { global: { fetch } });
 
-    // ── Resolve tenant ────────────────────────────────────────────────────────
-    const { data: profile } = await db.from("profiles").select("tenant_id").eq("id", userId).maybeSingle();
-    if (!profile?.tenant_id) {
-      return new Response(JSON.stringify({ error: "Tenant not found" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
+    // Load router first
+    const { data: router } = await db.from("routers").select("*").eq("id", routerId).maybeSingle();
+    if (!router) {
+      try { await db.from("provision_logs").insert({ router_id: routerId, tenant_id: null, stage: "error", message: "Router not found", success: false }); } catch {}
+      return new Response(JSON.stringify({ error: "Router not found" }), { status: 404, headers: { ...CORS, "content-type": "application/json" } });
     }
-    const tenantId = profile.tenant_id;
+
+    // Resolve tenant either from authenticated user (normal mode) or from router (service mode)
+    let tenantId: string | null = null;
+    if (!serviceMode) {
+      const userResp = await fetch(SUPABASE_URL.replace(/\/+$/, "") + "/auth/v1/user", {
+        headers: { Authorization: "Bearer " + token, apikey: ANON_KEY },
+      });
+      if (!userResp.ok) return new Response(JSON.stringify({ error: "Invalid token" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
+      const userId = (await userResp.json())?.id;
+      if (!userId) return new Response(JSON.stringify({ error: "Unable to resolve user" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
+
+      const { data: profile } = await db.from("profiles").select("tenant_id").eq("id", userId).maybeSingle();
+      if (!profile?.tenant_id) {
+        return new Response(JSON.stringify({ error: "Tenant not found" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
+      }
+      tenantId = profile.tenant_id;
+
+      if (tenantId !== (router as any).tenant_id) {
+        try { await db.from("provision_logs").insert({ router_id: routerId, tenant_id, stage: "error", message: "Permission denied: router does not belong to your tenant", success: false }); } catch {}
+        return new Response(JSON.stringify({ error: "Permission denied" }), { status: 403, headers: { ...CORS, "content-type": "application/json" } });
+      }
+    } else {
+      tenantId = (router as any).tenant_id;
+    }
 
     const log = async (stage: string, message: string, success: boolean) => {
-      try {
-        await db.from("provision_logs").insert({ router_id: routerId, tenant_id: tenantId, stage, message, success });
-      } catch (_) { /* ignore log errors */ }
+      try { await db.from("provision_logs").insert({ router_id: routerId, tenant_id: tenantId, stage, message, success }); } catch (_) {}
     };
 
-    const { data: router } = await db.from("routers").select("*").eq("id", routerId).eq("tenant_id", tenantId).maybeSingle();
-    if (!router) {
-      await log("error", "Router not found", false);
-      return new Response(JSON.stringify({ error: "Router not found" }), { status: 404, headers: { ...CORS, "content-type": "application/json" } });
+    // ensure router belongs to tenant (in service mode tenantId was set from router)
+    if (!tenantId) {
+      await log("error", "Unable to resolve tenant", false);
+      return new Response(JSON.stringify({ error: "Tenant not found" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
     }
 
     // ── 1. Resolve RADIUS ─────────────────────────────────────────────────────

@@ -288,6 +288,20 @@ async function executeJob(sb: any, job: any): Promise<void> {
       break;
     }
 
+    // ── Auto-apply router configuration when router comes online ─────────────
+    case "apply_router": {
+      const { router_id } = payload;
+      if (!router_id) return;
+      try {
+        // Invoke the apply-router-config function as the service (service-mode supported)
+        await sb.functions.invoke("apply-router-config", { body: { routerId: router_id } });
+      } catch (e) {
+        // Bubble up error so queue-worker will retry according to backoff
+        throw new Error(`apply_router failed: ${e?.message ?? String(e)}`);
+      }
+      break;
+    }
+
     // ── Subscription Provisioning ───────────────────────────────────────────
     case "run_provisioning_workflow": {
       const { workflow_id } = payload;

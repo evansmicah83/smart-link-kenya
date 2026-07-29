@@ -35,6 +35,22 @@ serve(async (req: Request) => {
       success: true,
     }]);
 
+    // Enqueue an apply job so the platform can attempt automatic configuration
+    try {
+      const { data: r } = await supabase.from("routers").select("tenant_id").eq("id", routerId).maybeSingle();
+      const tenantId = (r as any)?.tenant_id ?? null;
+      await supabase.from("job_queue").insert({
+        tenant_id: tenantId,
+        type: "apply_router",
+        payload: { router_id: routerId },
+        status: "pending",
+        priority: 1,
+        queue_name: "provisioning",
+        run_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      }).catch(() => {});
+    } catch (_) { /* ignore enqueue failures */ }
+
     return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
   } catch (err) {
     console.error(err);
