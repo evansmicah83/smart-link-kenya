@@ -2,18 +2,14 @@
 # ============================================================
 # SmartLinkNet Platform — FreeRADIUS Infrastructure Setup
 #
-# This script is run ONCE by the SmartLinkNet operator to
-# deploy the shared FreeRADIUS server that serves ALL ISPs
-# on the platform. ISPs never run this — it is part of
-# SmartLinkNet's own infrastructure, like a database server.
-#
+# Run ONCE by the SmartLinkNet operator on a dedicated VPS.
+# This is platform infrastructure — not an ISP script.
 # After running, all ISP routers provisioned through
 # SmartLinkNet automatically point to this FreeRADIUS server.
-# No ISP configuration required.
 #
 # Requirements: Ubuntu 22.04 LTS VPS (Hetzner/DO/AWS/GCP)
 #
-# Usage (run as root on your VPS):
+# Usage (run as root):
 #   export DB_HOST="db.tghaarhofriakwgvqmpm.supabase.co"
 #   export DB_PORT="5432"
 #   export DB_NAME="postgres"
@@ -38,8 +34,8 @@ error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 : "${DB_PASS:?Set DB_PASS to your Supabase DB password}"
 : "${FR_SECRET:?Set FR_SECRET to the shared secret for MikroTik NAS clients}"
 
-FREERADIUS_VER="3.0"
-FR_CONF="/etc/freeradius/${FREERADIUS_VER}"
+FR_VER="3.0"
+FR_CONF="/etc/freeradius/${FR_VER}"
 
 info "=== SmartLinkNet FreeRADIUS Setup ==="
 info "DB Host : $DB_HOST"
@@ -57,7 +53,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   libpq-dev \
   ufw \
   curl \
-  jq
+  jq \
+  ca-certificates
 
 # ── 2. Firewall ───────────────────────────────────────────────────────────
 info "Configuring firewall..."
@@ -70,20 +67,21 @@ ufw reload
 
 # ── 3. Enable SQL module ──────────────────────────────────────────────────
 info "Enabling FreeRADIUS SQL module..."
-cd "$FR_CONF/mods-enabled"
+cd "${FR_CONF}/mods-enabled"
 ln -sf ../mods-available/sql sql 2>/dev/null || true
 
 # ── 4. Write SQL module config ────────────────────────────────────────────
 info "Writing SQL module config..."
-cat > "$FR_CONF/mods-available/sql" <<SQLCONF
+cat > "${FR_CONF}/mods-available/sql" <<SQLCONF
 sql {
-  driver        = "rlm_sql_postgresql"
-  dialect       = "postgresql"
-  server        = "${DB_HOST}"
-  port          = ${DB_PORT}
-  login         = "${DB_USER}"
-  password      = "${DB_PASS}"
-  radius_db     = "${DB_NAME}"
+  driver   = "rlm_sql_postgresql"
+  dialect  = "postgresql"
+
+  server   = "${DB_HOST}"
+  port     = ${DB_PORT}
+  login    = "${DB_USER}"
+  password = "${DB_PASS}"
+  radius_db = "${DB_NAME}"
 
   postgresql {
     send_application_name = yes
@@ -142,13 +140,12 @@ sql {
         query = "UPDATE radacct SET acctupdatetime = NOW(), acctinputoctets = %{Acct-Input-Octets}, acctoutputoctets = %{Acct-Output-Octets}, acctsessiontime = %{Acct-Session-Time}, framedipaddress = '%{Framed-IP-Address}' WHERE acctuniqueid = '%{Acct-Unique-Session-Id}' AND acctstoptime IS NULL"
       }
       stop {
-        query = "UPDATE radacct SET acctstoptime = TO_TIMESTAMP(%{integer:Event-Timestamp}), acctupdatetime = NOW(), acctsessiontime = %{Acct-Session-Time}, acctinputoctets = %{Acct-Input-Octets}, acctoutputoctets = %{Acct-Output-Octets}, acctterminatecause = '%{Acct-Terminate-Cause}', framedipaddress = '%{Framed-IP-Address}' WHERE acctuniqueid = '%{Acct-Unique-Session-Id}'"
+        query = "UPDATE radacct SET acctstoptime = TO_TIMESTAMP(%{integer:Event-Timestamp}), acctupdatetime = NOW(), acctsessiontime = %{Acct-Session-Time}, acctinputoctets = %{Acct-Input-Octets}, acctoutputoctets = %{Acct-Output-Octets}, acctterminatecause = '%{Acct-Terminate-Cause}', framedipaddress = '%{Framed-IP-Address}', connectinfo_stop = '%{Connect-Info}' WHERE acctuniqueid = '%{Acct-Unique-Session-Id}'"
       }
     }
   }
 
   post-auth {
-    reference = "queries.post-auth"
     query = "INSERT INTO radpostauth (username, pass, reply, nasipaddress, nasportid, authdate, class) VALUES ('%{SQL-User-Name}', '%{%{User-Password}:-Chap-Password}', '%{reply:Packet-Type}', '%{NAS-IP-Address}', '%{NAS-Port-Id}', NOW(), '%{Class}')"
   }
 }
@@ -156,18 +153,21 @@ SQLCONF
 
 # ── 5. Write default virtual server ──────────────────────────────────────
 info "Writing virtual server config..."
-cat > "$FR_CONF/sites-available/default" <<'SITECONF'
+cat > "${FR_CONF}/sites-available/default" <<'SITECONF'
 server default {
-  listen { type = auth; ipaddr = *; port = 1812 }
-  listen { type = acct; ipaddr = *; port = 1813 }
+  listen { type = auth; ipaddr = *; port = 1812; limit { max_connections = 256; lifetime = 0; idle_timeout = 30 } }
+  listen { type = acct; ipaddr = *; port = 1813; limit { max_connections = 256; lifetime = 0; idle_timeout = 30 } }
   listen { type = coa;  ipaddr = *; port = 3799 }
 
   authorize {
     filter_username
     preprocess
+    if (!&User-Name) { reject }
     sql
     if (!control:Auth-Type) {
-      if (&User-Password) { update control { Auth-Type := "PAP" } }
+      if (&User-Password)    { update control { Auth-Type := "PAP"     } }
+      elsif (&CHAP-Password) { update control { Auth-Type := "CHAP"    } }
+      elsif (&MS-CHAP-Challenge) { update control { Auth-Type := "MS-CHAP" } }
     }
     expiration
     logintime
@@ -175,39 +175,43 @@ server default {
   }
 
   authenticate {
-    Auth-Type PAP  { pap   }
-    Auth-Type CHAP { chap  }
+    Auth-Type PAP    { pap    }
+    Auth-Type CHAP   { chap   }
     Auth-Type MS-CHAP { mschap }
   }
 
   preacct  { preprocess; acct_unique; suffix; files }
+
   accounting { detail; sql; attr_filter.accounting_response }
-  session  { sql }
+
+  session { sql }
 
   post-auth {
     sql
     Post-Auth-Type REJECT { sql; attr_filter.access_reject }
   }
 
-  recv-coa { sql }
-  send-coa { sql }
+  recv-coa { }
+  send-coa { }
 }
 SITECONF
 
-ln -sf ../sites-available/default "$FR_CONF/sites-enabled/default" 2>/dev/null || true
+ln -sf ../sites-available/default "${FR_CONF}/sites-enabled/default" 2>/dev/null || true
 
-# Disable inner-tunnel and other unused sites
+# Disable unused sites
 for site in inner-tunnel control-socket; do
-  rm -f "$FR_CONF/sites-enabled/$site"
+  rm -f "${FR_CONF}/sites-enabled/${site}"
 done
 
-# ── 6. Install MikroTik dictionary ────────────────────────────────────────
+# ── 6. Install MikroTik VSA dictionary ────────────────────────────────────
 info "Installing MikroTik VSA dictionary..."
-cat >> "$FR_CONF/dictionary" <<'DICT'
-$INCLUDE dictionary.mikrotik
-DICT
 
-cat > "$FR_CONF/dictionary.mikrotik" <<'MIKROTIK'
+# Append include only if not already present
+if ! grep -q "dictionary.mikrotik" "${FR_CONF}/dictionary" 2>/dev/null; then
+  echo '$INCLUDE dictionary.mikrotik' >> "${FR_CONF}/dictionary"
+fi
+
+cat > "${FR_CONF}/dictionary.mikrotik" <<'MIKROTIK'
 VENDOR          MikroTik        14988
 BEGIN-VENDOR    MikroTik
 ATTRIBUTE       Mikrotik-Recv-Limit             1   integer
@@ -226,35 +230,44 @@ MIKROTIK
 # ── 7. Disable unused modules ─────────────────────────────────────────────
 info "Disabling unused modules..."
 for mod in ldap krb5 eap perl python; do
-  rm -f "$FR_CONF/mods-enabled/$mod"
+  rm -f "${FR_CONF}/mods-enabled/${mod}"
 done
 
 # ── 8. Set permissions ────────────────────────────────────────────────────
-chown -R freerad:freerad "$FR_CONF"
-chmod 640 "$FR_CONF/mods-available/sql"
+chown -R freerad:freerad "${FR_CONF}"
+chmod 640 "${FR_CONF}/mods-available/sql"
 
-# ── 9. Test config ────────────────────────────────────────────────────────
+# ── 9. Test FreeRADIUS configuration ─────────────────────────────────────
 info "Testing FreeRADIUS configuration..."
-freeradius -C -d "$FR_CONF" && info "Config test PASSED" || error "Config test FAILED — check $FR_CONF"
+# freeradius -C tests config syntax without starting the daemon
+if freeradius -C -d "${FR_CONF}"; then
+  info "Config test PASSED"
+else
+  error "Config test FAILED — check ${FR_CONF}"
+fi
 
-# ── 10. Enable + start service ────────────────────────────────────────────
+# ── 10. Enable + start FreeRADIUS ─────────────────────────────────────────
 info "Starting FreeRADIUS service..."
 systemctl enable freeradius
 systemctl restart freeradius
 sleep 2
-systemctl is-active freeradius && info "FreeRADIUS is running" || error "FreeRADIUS failed to start"
 
-# ── 11. Install Node.js + CoA shim ──────────────────────────────────────
+if systemctl is-active --quiet freeradius; then
+  info "FreeRADIUS is running"
+else
+  error "FreeRADIUS failed to start — check: journalctl -u freeradius"
+fi
+
+# ── 11. Install Node.js + CoA shim ────────────────────────────────────────
 info "Installing Node.js + CoA management shim..."
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>/dev/null
 apt-get install -y -qq nodejs
 
 mkdir -p /opt/smartlinknet
 
-# Copy coa-shim.js if present alongside setup.sh, else download placeholder
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/coa-shim.js" ]; then
-  cp "$SCRIPT_DIR/coa-shim.js" /opt/smartlinknet/coa-shim.js
+if [ -f "${SCRIPT_DIR}/coa-shim.js" ]; then
+  cp "${SCRIPT_DIR}/coa-shim.js" /opt/smartlinknet/coa-shim.js
 else
   warn "coa-shim.js not found next to setup.sh — copy it manually to /opt/smartlinknet/coa-shim.js"
 fi
@@ -289,11 +302,57 @@ systemctl daemon-reload
 systemctl enable smartlinknet-coa
 systemctl start smartlinknet-coa
 sleep 2
-systemctl is-active smartlinknet-coa \
-  && info "CoA shim running on 127.0.0.1:8080" \
-  || warn "CoA shim failed — check: journalctl -u smartlinknet-coa"
 
-# ── 12. Get public IP and print summary ──────────────────────────────────
+if systemctl is-active --quiet smartlinknet-coa; then
+  info "CoA shim running on 127.0.0.1:8080"
+else
+  warn "CoA shim failed — check: journalctl -u smartlinknet-coa"
+fi
+
+# ── 12. TLS reverse proxy for CoA shim (nginx + self-signed cert) ───────────
+# coa-send edge function calls https://<VPS_IP>:8443/coa
+# nginx terminates TLS and proxies to 127.0.0.1:8080
+info "Installing nginx TLS proxy for CoA shim..."
+apt-get install -y -qq nginx openssl
+
+# Generate self-signed cert (replace with Let's Encrypt if you have a domain)
+SSL_DIR="/etc/nginx/ssl/smartlinknet"
+mkdir -p "${SSL_DIR}"
+if [ ! -f "${SSL_DIR}/coa.crt" ]; then
+  openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+    -keyout "${SSL_DIR}/coa.key" \
+    -out    "${SSL_DIR}/coa.crt" \
+    -subj   "/CN=smartlinknet-coa/O=SmartLinkNet" 2>/dev/null
+  info "Self-signed TLS cert generated (valid 10 years)"
+fi
+
+cat > /etc/nginx/sites-available/smartlinknet-coa <<'NGINXCONF'
+server {
+  listen 8443 ssl;
+  server_name _;
+
+  ssl_certificate     /etc/nginx/ssl/smartlinknet/coa.crt;
+  ssl_certificate_key /etc/nginx/ssl/smartlinknet/coa.key;
+  ssl_protocols       TLSv1.2 TLSv1.3;
+  ssl_ciphers         HIGH:!aNULL:!MD5;
+
+  location /coa {
+    proxy_pass         http://127.0.0.1:8080/coa;
+    proxy_set_header   Host $host;
+    proxy_read_timeout 15s;
+  }
+}
+NGINXCONF
+
+ln -sf /etc/nginx/sites-available/smartlinknet-coa /etc/nginx/sites-enabled/smartlinknet-coa
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl restart nginx
+ufw allow 8443/tcp comment "CoA shim HTTPS"
+
+info "CoA shim reachable at https://<VPS_IP>:8443/coa"
+info "NOTE: Self-signed cert — add the cert fingerprint to coa-send edge function or use Let's Encrypt"
+
+# ── 13. Get public IP + register in platform_settings ─────────────────────
 PUBLIC_IP=$(curl -s https://api.ipify.org || echo "unknown")
 
 echo ""
@@ -307,53 +366,49 @@ echo "  Acct port   : UDP 1813"
 echo "  CoA port    : UDP 3799"
 echo "  DB host     : $DB_HOST"
 echo ""
-echo -e "${YELLOW}  Next steps:${NC}"
-echo "  1. In SmartLinkNet → Settings → RADIUS Servers:"
-echo "     Set freeradius_ip = $PUBLIC_IP"
-echo ""
-echo "  2. Add each MikroTik router's public IP to nas_devices table"
-echo "     with the shared secret you configured."
-echo ""
-echo "  3. Reprovision any existing routers so they point to $PUBLIC_IP"
-echo "     instead of the old Supabase IP."
-echo ""
-echo "  4. Test auth:  radtest <username> <password> $PUBLIC_IP 1812 <secret>"
-echo ""
-echo -e "${GREEN}  FreeRADIUS is live and reading from Supabase PostgreSQL.${NC}"
-echo ""
 
-# ── Auto-register FreeRADIUS IP in platform_settings ─────────────────────────────
 if [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
   info "Registering FreeRADIUS IP in SmartLinkNet platform settings..."
   SUPABASE_URL="https://tghaarhofriakwgvqmpm.supabase.co"
-  curl -s -X POST \
+  HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
     "${SUPABASE_URL}/rest/v1/platform_settings" \
     -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
     -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
     -H "Content-Type: application/json" \
     -H "Prefer: resolution=merge-duplicates" \
-    -d "$(cat <<JSON
-{
-  "key": "freeradius",
-  "value": {
-    "primary_ip": "${PUBLIC_IP}",
-    "secondary_ip": null,
-    "auth_port": 1812,
-    "acct_port": 1813,
-    "coa_port": 3799,
-    "interim_interval": 300,
-    "timeout_ms": 3000,
-    "retry_count": 3,
-    "shared_secret": "${FR_SECRET}",
-    "coa_shim_port": 8080,
-    "deployed": true
-  }
-}
-JSON
-    )" > /dev/null
-  info "✓ platform_settings.freeradius.primary_ip = ${PUBLIC_IP}"
-  info "✓ All future ISP router provisioning will automatically use this FreeRADIUS server"
+    -d "{
+      \"key\": \"freeradius\",
+      \"value\": {
+        \"primary_ip\":       \"${PUBLIC_IP}\",
+        \"secondary_ip\":     null,
+        \"auth_port\":        1812,
+        \"acct_port\":        1813,
+        \"coa_port\":         3799,
+        \"interim_interval\": 300,
+        \"timeout_ms\":       3000,
+        \"retry_count\":      3,
+        \"shared_secret\":    \"${FR_SECRET}\",
+        \"coa_shim_port\":    8080,
+        \"deployed\":         true
+      }
+    }")
+
+  if [ "${HTTP_STATUS}" = "200" ] || [ "${HTTP_STATUS}" = "201" ]; then
+    info "✓ platform_settings.freeradius.primary_ip = ${PUBLIC_IP}"
+    info "✓ All future ISP router provisioning will use this FreeRADIUS server"
+  else
+    warn "platform_settings update returned HTTP ${HTTP_STATUS}"
+    warn "Manually run: UPDATE platform_settings SET value = value || '{\"primary_ip\":\"${PUBLIC_IP}\",\"deployed\":true}' WHERE key = 'freeradius';"
+  fi
 else
   warn "SUPABASE_SERVICE_ROLE_KEY not set — manually update platform_settings:"
   warn "  UPDATE platform_settings SET value = value || '{\"primary_ip\":\"${PUBLIC_IP}\",\"deployed\":true}' WHERE key = 'freeradius';"
 fi
+
+echo ""
+echo -e "${YELLOW}  Next steps:${NC}"
+echo "  1. Test auth:  radtest <username> <password> ${PUBLIC_IP} 1812 ${FR_SECRET}"
+echo "  2. Reprovision any existing routers so they point to ${PUBLIC_IP}"
+echo ""
+echo -e "${GREEN}  FreeRADIUS is live and reading from Supabase PostgreSQL.${NC}"
+echo ""

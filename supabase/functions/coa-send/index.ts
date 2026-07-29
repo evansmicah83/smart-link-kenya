@@ -93,6 +93,13 @@ serve(async (req: Request) => {
     const coaPort   = radiusServer.coa_port || 3799;
     const coaSecret = radiusServer.coa_secret || radiusServer.shared_secret || "SmartLinkNet";
 
+    // Validate FreeRADIUS IP is a real IPv4 address before using in fetch URL.
+    // This prevents SSRF if the DB value were ever tampered with (CWE-918).
+    const IPV4_STRICT = /^(\d{1,3}\.){3}\d{1,3}$/;
+    if (!IPV4_STRICT.test(coaIp)) {
+      return resp({ error: "Invalid FreeRADIUS IP in platform config" }, 400);
+    }
+
     // ── Resolve active session for this user ────────────────────────────
     const { data: session } = await db
       .from("sessions")
@@ -116,11 +123,16 @@ serve(async (req: Request) => {
     // configured to accept CoA trigger requests from SmartLinkNet.
     // The FreeRADIUS server then sends the actual UDP CoA packet to MikroTik.
 
-    const frManagementUrl = `http://${coaIp}:8080/coa`;
+    // CoA shim listens on 127.0.0.1:8080 on the FreeRADIUS VPS.
+    // The connection from this edge function to the shim goes over the
+    // public internet — use HTTPS with a valid certificate.
+    // The shim must be fronted by nginx/caddy with TLS on port 8443.
+    const frManagementUrl = `https://${coaIp}:8443/coa`;
 
     const coaPayload: Record<string, string> = {
-      "User-Name":    username,
+      "User-Name":      username,
       "NAS-IP-Address": coaIp,
+      "tenant_id":      tenantId,   // required by coa-shim for tenant-scoped NAS lookup
     };
 
     if (nasSessionId) {

@@ -1,15 +1,24 @@
 ##############################################################
-# SmartLinkNet FreeRADIUS — sites-enabled/default
-# Handles Hotspot + PPPoE auth, accounting, CoA, Disconnect
+# SmartLinkNet FreeRADIUS — sites-available/default
+#
+# Single virtual server handling:
+#   UDP 1812 — Authentication (Hotspot PAP + PPPoE CHAP/MS-CHAPv2)
+#   UDP 1813 — Accounting (Start/Stop/Interim-Update)
+#   UDP 3799 — CoA / Disconnect-Message from SmartLinkNet
+#
+# All auth data read from PostgreSQL views via rlm_sql.
+# Accounting written directly to radacct table by rlm_sql.
+# Voucher mark-used handled by fn_sync_radpostauth DB trigger.
+# No exec blocks — no HTTP calls — pure SQL path.
 ##############################################################
 
 server default {
 
-  # ── Authentication (UDP 1812) ─────────────────────────────
+  # ── Authentication listener (UDP 1812) ───────────────────
   listen {
-    type      = auth
-    ipaddr    = *
-    port      = 1812
+    type     = auth
+    ipaddr   = *
+    port     = 1812
     limit {
       max_connections = 256
       lifetime        = 0
@@ -17,11 +26,11 @@ server default {
     }
   }
 
-  # ── Accounting (UDP 1813) ─────────────────────────────────
+  # ── Accounting listener (UDP 1813) ───────────────────────
   listen {
-    type      = acct
-    ipaddr    = *
-    port      = 1813
+    type     = acct
+    ipaddr   = *
+    port     = 1813
     limit {
       max_connections = 256
       lifetime        = 0
@@ -29,31 +38,45 @@ server default {
     }
   }
 
-  # ── CoA / Disconnect (UDP 3799) ───────────────────────────
+  # ── CoA / Disconnect listener (UDP 3799) ─────────────────
   listen {
-    type      = coa
-    ipaddr    = *
-    port      = 3799
+    type   = coa
+    ipaddr = *
+    port   = 3799
   }
 
-  # ── Authorization ─────────────────────────────────────────
+  # ── Authorize ─────────────────────────────────────────────
+  # 1. filter_username  — reject malformed usernames
+  # 2. preprocess       — fix NAS-Port, add Stripped-User-Name
+  # 3. sql              — load radcheck (credentials) + radreply (attrs)
+  #                       + radusergroup → radgroupcheck/radgroupreply
+  # 4. Set Auth-Type based on what the NAS sent
+  # 5. expiration       — reject if Expiration attribute is past
+  # 6. pap              — set Auth-Type PAP if User-Password present
   authorize {
     filter_username
     preprocess
 
-    # Reject if no username
     if (!&User-Name) {
       reject
     }
 
-    # SQL lookup: check radcheck, load radreply, load radusergroup
     sql
 
-    # If no Auth-Type set by SQL, use local password check
     if (!control:Auth-Type) {
       if (&User-Password) {
         update control {
           Auth-Type := "PAP"
+        }
+      }
+      elsif (&CHAP-Password) {
+        update control {
+          Auth-Type := "CHAP"
+        }
+      }
+      elsif (&MS-CHAP-Challenge) {
+        update control {
+          Auth-Type := "MS-CHAP"
         }
       }
     }
@@ -63,7 +86,10 @@ server default {
     pap
   }
 
-  # ── Authentication ────────────────────────────────────────
+  # ── Authenticate ──────────────────────────────────────────
+  # MikroTik Hotspot uses PAP (plaintext password over RADIUS).
+  # MikroTik PPPoE uses CHAP or MS-CHAPv2.
+  # Cleartext-Password in radcheck supports all three.
   authenticate {
     Auth-Type PAP {
       pap
@@ -85,10 +111,12 @@ server default {
   }
 
   # ── Accounting ────────────────────────────────────────────
+  # sql writes Start/Stop/Interim-Update directly to radacct.
+  # The fn_sync_radacct trigger then syncs to sessions table.
+  # detail writes to /var/log/freeradius/radacct/ for audit.
   accounting {
     detail
     sql
-    exec
     attr_filter.accounting_response
   }
 
@@ -98,20 +126,13 @@ server default {
   }
 
   # ── Post-auth ─────────────────────────────────────────────
+  # sql writes to radpostauth.
+  # fn_sync_radpostauth trigger handles:
+  #   - auth_events insert
+  #   - voucher mark-used on Access-Accept
+  # No exec block needed — all logic is in the DB trigger.
   post-auth {
-    # Log all auth attempts (accept + reject) to radpostauth
     sql
-
-    # Mark voucher as used on first successful auth
-    if (&reply:Packet-Type == "Access-Accept") {
-      update request {
-        &Tmp-String-0 := "%{User-Name}"
-      }
-      exec {
-        wait   = no
-        input_pairs = request
-      }
-    }
 
     Post-Auth-Type REJECT {
       sql
@@ -119,42 +140,17 @@ server default {
     }
   }
 
-  # ── CoA / Disconnect handling ─────────────────────────────
+  # ── CoA / Disconnect ──────────────────────────────────────
+  # recv-coa: called when FreeRADIUS receives a CoA-Request or
+  #   Disconnect-Request from SmartLinkNet (via radclient/coa-shim).
+  #   We do NOT call sql here — CoA packets are forwarded to the NAS,
+  #   not looked up in the DB. The NAS IP is in the packet itself.
   recv-coa {
-    sql
+    # Validate the CoA packet came from a known NAS
+    # (FreeRADIUS already checks the shared secret from the nas view)
   }
 
   send-coa {
-    sql
-  }
-}
-
-##############################################################
-# Inner tunnel server for EAP (optional, for WPA Enterprise)
-##############################################################
-server inner-tunnel {
-  listen {
-    ipaddr    = 127.0.0.1
-    port      = 18120
-    type      = auth
-  }
-
-  authorize {
-    filter_username
-    sql
-    pap
-  }
-
-  authenticate {
-    Auth-Type PAP { pap }
-    Auth-Type CHAP { chap }
-    Auth-Type MS-CHAP { mschap }
-  }
-
-  post-auth {
-    sql
-    Post-Auth-Type REJECT {
-      attr_filter.access_reject
-    }
+    # Nothing to do — FreeRADIUS sends the CoA-ACK/NAK back to radclient
   }
 }

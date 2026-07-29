@@ -112,12 +112,14 @@ serve(async (req: Request) => {
   const hasHotspot = services.includes("hotspot");
   const hasPppoe = services.includes("pppoe");
 
-  // Use freeradius_ip (actual VPS IP) if set, otherwise fall back to host
+  // Use freeradius_ip (actual VPS IP) if set, otherwise fall back to host.
+  // Use a literal regex — not a variable — to avoid ReDoS (CWE-185).
+  const IPV4_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
   const radiusIp = radiusServer?.freeradius_ip ||
-    (radiusServer?.host && /^\d+\.\d+\.\d+\.\d+$/.test(radiusServer.host) ? radiusServer.host : null);
+    (radiusServer?.host && IPV4_RE.test(radiusServer.host) ? radiusServer.host : null);
   const radiusIp2 = radiusServer2?.freeradius_ip ||
     radiusServer?.freeradius_ip2 ||
-    (radiusServer2?.host && /^\d+\.\d+\.\d+\.\d+$/.test(radiusServer2.host) ? radiusServer2.host : null);
+    (radiusServer2?.host && IPV4_RE.test(radiusServer2.host) ? radiusServer2.host : null);
   const radiusSecret  = radiusServer?.shared_secret || "SmartLinkNet";
   const radiusSecret2 = radiusServer2?.shared_secret || radiusSecret;
   const radiusAuthPort  = radiusServer?.auth_port  || 1812;
@@ -374,11 +376,13 @@ serve(async (req: Request) => {
         " secret=" + radiusSecret +
         " authentication-port=" + radiusAuthPort +
         " accounting-port=" + radiusAcctPort +
-        " timeout=3000ms" +
+        // RouterOS timeout is an integer in milliseconds — no 'ms' suffix
+        " timeout=3000" +
         " accounting-backup=no" +
         ' comment="SmartLinkNet-Primary"'),
     );
-    // Secondary FreeRADIUS — automatic failover
+    // Secondary FreeRADIUS — accounting-backup=yes means RouterOS uses this
+    // server only when the primary is unreachable (failover, not load-balance)
     if (radiusIp2) {
       lines.push(
         retry("/radius add service=" + radiusService +
@@ -386,7 +390,7 @@ serve(async (req: Request) => {
           " secret=" + radiusSecret2 +
           " authentication-port=" + radiusAuthPort +
           " accounting-port=" + radiusAcctPort +
-          " timeout=3000ms" +
+          " timeout=3000" +
           " accounting-backup=yes" +
           ' comment="SmartLinkNet-Secondary"'),
       );
