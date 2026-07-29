@@ -25,6 +25,7 @@ serve(async (req: Request) => {
 
   const url = new URL(req.url);
   const token = url.searchParams.get("token") || "";
+  const isRollback = url.searchParams.get("rollback") === "1";
   if (!token) return new Response(":log warning \"SLN: no token\"", { status: 400, headers: { "content-type": "text/plain" } });
 
   const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { global: { fetch } });
@@ -39,7 +40,19 @@ serve(async (req: Request) => {
     return new Response(":log warning \"SLN: token not found\"", { status: 410, headers: { "content-type": "text/plain" } });
   }
 
-  // Extend token expiry
+  // Rollback: return a script that restores the pre-provision backup
+  if (isRollback) {
+    const supabaseHost = new URL(SUPABASE_URL).host;
+    const baseCallback = "https://" + supabaseHost + "/functions/v1/provision-callback?router_id=" + router.id;
+    const rollbackScript = [
+      "# SmartLinkNet Rollback Script",
+      "# Restores sln-pre-provision backup and reports rollback stage",
+      ":do { /system backup load name=sln-pre-provision } on-error={ :log error \"SLN: rollback backup not found\" };",
+      ":do { /tool fetch mode=https url=\"" + baseCallback + "&stage=rollback\" keep-result=no } on-error={};",
+    ].join("\n");
+    return new Response(rollbackScript, { status: 200, headers: { "content-type": "text/plain" } });
+  }
+
   await db.from("routers").update({
     status: "provisioning",
     provision_token_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
@@ -75,9 +88,11 @@ serve(async (req: Request) => {
     radiusServer = seeded;
   }
 
+  // ── Derived config ────────────────────────────────────────────────────────
   const ispSlug = (tenant?.slug ?? router.tenant_id).replace(/[^a-z0-9]/g, "-").toLowerCase();
   const safeName = (router.name || "MikroTik").replace(/"/g, '\\"');
   const bridgeName = ispSlug + "-bridge";
+  const portalDomain = "smart-link-kenya.vercel.app";
 
   const subnet = router.subnet || "172.31.0.0/16";
   const [networkAddr, prefixLen] = subnet.split("/");
@@ -110,15 +125,111 @@ serve(async (req: Request) => {
 
   const baseCallback = "https://" + supabaseHost + "/functions/v1/provision-callback?router_id=" + router.id;
   const pollUrl = "https://" + supabaseHost + "/functions/v1/router-poll?router_id=" + router.id + "&token=" + apiPassword;
+  const telemetryUrl = "https://" + supabaseHost + "/functions/v1/router-poll?router_id=" + router.id + "&token=" + apiPassword + "&telemetry=1";
+  const discoverUrl = "https://" + supabaseHost + "/functions/v1/router-poll?router_id=" + router.id + "&token=" + apiPassword + "&discover=1";
 
-  // cb() — inline fetch to provision-callback with a stage, fires after each section
-  // RouterOS: /tool fetch with keep-result=no so it doesn't block
+  // cb() — fire-and-forget stage callback to cloud
   const cb = (stage: string) =>
     ":do { /tool fetch mode=https url=\"" + baseCallback + "&stage=" + stage + "\" keep-result=no } on-error={}";
 
+  // safe() — wrap any command so a failure doesn't abort the script
   const safe = (cmd: string) => ":do { " + cmd + " } on-error={}";
 
-  // Poll script stored as named script — avoids all quoting issues in scheduler on-event
+  // retry() — attempt a command up to 3 times with 2s delay, using a unique counter per call
+  let retryCounter = 0;
+  const retry = (cmd: string) => {
+    const n = retryCounter++;
+    return [
+      ":local slnR" + n + " 0;",
+      ":local slnOk" + n + " false;",
+      ":while ($slnR" + n + " < 3 && !$slnOk" + n + ") do={",
+      "  :do { " + cmd + "; :set slnOk" + n + " true } on-error={ :set slnR" + n + " ($slnR" + n + " + 1); :delay 2s };",
+      "}",
+    ].join(" ");
+  };
+
+  // ── Telemetry script: CPU, RAM, uptime, sessions, traffic, RADIUS connectivity ──
+  const telemetryScriptBody = [
+    ":local cpu [/system resource get cpu-load];",
+    ":local freemem [/system resource get free-memory];",
+    ":local totalmem [/system resource get total-memory];",
+    ":local uptime [/system resource get uptime];",
+    ":local version [/system resource get version];",
+    ":local board [/system resource get board-name];",
+    ":local hsUsers 0;",
+    ":local pppUsers 0;",
+    ":local dhcpLeases 0;",
+    ":local rxBytes 0;",
+    ":local txBytes 0;",
+    // RADIUS connectivity: check if RADIUS server is marked active/healthy in RouterOS
+    ":local radiusOk 0;",
+    ":do { :if ([:len [/radius find]] > 0) do={ :set radiusOk 1 } } on-error={};",
+    hasHotspot ? ":do { :set hsUsers [:len [/ip hotspot active print count-only]] } on-error={};" : "",
+    hasPppoe ? ":do { :set pppUsers [:len [/ppp active print count-only]] } on-error={};" : "",
+    ":do { :set dhcpLeases [:len [/ip dhcp-server lease print count-only]] } on-error={};",
+    ":do { :set rxBytes [/interface get " + uplinkInterface + " rx-byte] } on-error={};",
+    ":do { :set txBytes [/interface get " + uplinkInterface + " tx-byte] } on-error={};",
+    ":local qstr (\"cpu=\" . $cpu . \"&mem=\" . $freemem . \"&totalmem=\" . $totalmem . \"&uptime=\" . $uptime . \"&version=\" . $version . \"&board=\" . $board . \"&hs=\" . $hsUsers . \"&ppp=\" . $pppUsers . \"&leases=\" . $dhcpLeases . \"&rx=\" . $rxBytes . \"&tx=\" . $txBytes . \"&radius=\" . $radiusOk);",
+    ":do { /tool fetch mode=https url=(\"" + telemetryUrl + "&\" . $qstr) keep-result=no } on-error={};",
+  ].filter(Boolean).join(" ");
+
+  // ── Discovery script: reports ALL existing config ────────────────────────
+  const discoveryScriptBody = [
+    // Interfaces
+    ":local ifList \"\";",
+    ":foreach i in=[/interface find] do={",
+    "  :local n [/interface get $i name];",
+    "  :local t [/interface get $i type];",
+    "  :local r [/interface get $i running];",
+    "  :set ifList ($ifList . $n . \":\" . $t . \":\" . [:tostr $r] . \",\");",
+    "};",
+    // Bridges
+    ":local brList \"\";",
+    ":foreach b in=[/interface bridge find] do={",
+    "  :set brList ($brList . [/interface bridge get $b name] . \",\");",
+    "};",
+    // DHCP servers
+    ":local dhcpList \"\";",
+    ":foreach d in=[/ip dhcp-server find] do={",
+    "  :set dhcpList ($dhcpList . [/ip dhcp-server get $d name] . \",\");",
+    "};",
+    // IP pools
+    ":local poolList \"\";",
+    ":foreach p in=[/ip pool find] do={",
+    "  :set poolList ($poolList . [/ip pool get $p name] . \",\");",
+    "};",
+    // Hotspot servers
+    ":local hsList \"\";",
+    ":do { :foreach h in=[/ip hotspot find] do={ :set hsList ($hsList . [/ip hotspot get $h name] . \",\") } } on-error={};",
+    // PPPoE servers
+    ":local pppoeList \"\";",
+    ":do { :foreach s in=[/interface pppoe-server server find] do={ :set pppoeList ($pppoeList . [/interface pppoe-server server get $s service-name] . \",\") } } on-error={};",
+    // NAT rules count
+    ":local natCount 0;",
+    ":do { :set natCount [:len [/ip firewall nat find]] } on-error={};",
+    // Firewall filter rules count
+    ":local fwCount 0;",
+    ":do { :set fwCount [:len [/ip firewall filter find]] } on-error={};",
+    // DNS servers
+    ":local dnsServers \"\";",
+    ":do { :set dnsServers [/ip dns get servers] } on-error={};",
+    // RADIUS servers count
+    ":local radiusCount 0;",
+    ":do { :set radiusCount [:len [/radius find]] } on-error={};",
+    // Queue count
+    ":local queueCount 0;",
+    ":do { :set queueCount [:len [/queue simple find]] } on-error={};",
+    // Default route / WAN gateway
+    ":local wanIf \"\";",
+    ":do { :set wanIf [/ip route get [find dst-address=0.0.0.0/0] gateway] } on-error={};",
+    // Routes count
+    ":local routeCount 0;",
+    ":do { :set routeCount [:len [/ip route find]] } on-error={};",
+    ":local qstr (\"interfaces=\" . $ifList . \"&bridges=\" . $brList . \"&dhcp=\" . $dhcpList . \"&pools=\" . $poolList . \"&hotspot=\" . $hsList . \"&pppoe=\" . $pppoeList . \"&nat=\" . $natCount . \"&fw=\" . $fwCount . \"&dns=\" . $dnsServers . \"&radius=\" . $radiusCount . \"&queues=\" . $queueCount . \"&routes=\" . $routeCount . \"&wan=\" . $wanIf);",
+    ":do { /tool fetch mode=https url=(\"" + discoverUrl + "&\" . $qstr) keep-result=no } on-error={};",
+  ].join(" ");
+
+  // ── Re-provision poll script ─────────────────────────────────────────────
   const pollScriptBody = [
     ":do {",
     "/tool fetch mode=https url=\"" + pollUrl + "\" dst-path=sln-poll.txt keep-result=yes;",
@@ -131,118 +242,219 @@ serve(async (req: Request) => {
     "} on-error={}",
   ].join(" ");
 
+  // ── Verification script: checks each configured service is running ────────
+  const verifyLines: string[] = [
+    ":local slnErrors \"\";",
+    // Verify bridge exists
+    ":do { /interface bridge get [find name=" + bridgeName + "] name } on-error={ :set slnErrors ($slnErrors . \"bridge-missing,\") };",
+    // Verify gateway IP
+    ":do { /ip address get [find address~\"" + gatewayIp + "\"] address } on-error={ :set slnErrors ($slnErrors . \"gateway-missing,\") };",
+    // Verify DHCP server
+    ":do { /ip dhcp-server get [find name=" + ispSlug + "-dhcp] name } on-error={ :set slnErrors ($slnErrors . \"dhcp-missing,\") };",
+    // Verify NAT
+    ":do { /ip firewall nat get [find comment=\"SmartLinkNet NAT\"] chain } on-error={ :set slnErrors ($slnErrors . \"nat-missing,\") };",
+  ];
+  if (radiusIp) {
+    verifyLines.push(":do { /radius get [find comment=\"SmartLinkNet\"] address } on-error={ :set slnErrors ($slnErrors . \"radius-missing,\") };");
+  }
+  if (hasHotspot) {
+    verifyLines.push(":do { /ip hotspot get [find name=" + ispSlug + "-hotspot] name } on-error={ :set slnErrors ($slnErrors . \"hotspot-missing,\") };");
+  }
+  if (hasPppoe) {
+    verifyLines.push(":do { /interface pppoe-server server get [find service-name=" + ispSlug + "-pppoe] service-name } on-error={ :set slnErrors ($slnErrors . \"pppoe-missing,\") };");
+  }
+  verifyLines.push(
+    ":if ($slnErrors = \"\") do={",
+    "  " + cb("verify_ok"),
+    "} else={",
+    "  :do { /tool fetch mode=https url=\"" + baseCallback + "&stage=verify_fail&errors=\" . $slnErrors keep-result=no } on-error={}",
+    "}",
+  );
+  const verifyScriptBody = verifyLines.join(" ");
+
+  // ── Main provisioning script ─────────────────────────────────────────────
   const lines: string[] = [
-    "# SmartLinkNet provisioning script",
+    "# SmartLinkNet Enterprise Provisioning Script",
     "# Router: " + safeName + " | Services: " + (services.join(", ") || "none"),
     "# Generated: " + new Date().toISOString(),
     "",
-    "# 1. Identity",
+    "# ── PHASE 0: Discover existing config ───────────────────────────────",
+    safe("/system script remove [find name=sln-discover]"),
+    "/system script add name=sln-discover source=" + JSON.stringify(discoveryScriptBody) + ' comment="SmartLinkNet"',
+    safe("/system script run sln-discover"),
+    cb("discover"),
+    "",
+    "# ── PHASE 1: Validate pre-conditions ────────────────────────────────",
+    // Validate uplink has connectivity before touching anything
+    ":local slnValid true;",
+    ":do { /tool fetch mode=https url=\"https://cloudflare-dns.com\" keep-result=no } on-error={ :set slnValid false };",
+    ":if (!$slnValid) do={",
+    "  " + cb("validate_fail"),
+    "  :error \"SLN: no internet on uplink — aborting provisioning\"",
+    "}",
+    cb("validate"),
+    "",
+    "# ── PHASE 2: Backup existing config ─────────────────────────────────",
+    safe("/system backup save name=sln-pre-provision"),
+    cb("backup"),
+    "",
+    "# ── PHASE 3: Identity ────────────────────────────────────────────────",
     '/system identity set name="' + safeName + '"',
     cb("identity"),
     "",
-    "# 2. Bridge",
-    safe("/interface bridge add name=" + bridgeName + ' protocol-mode=rstp comment="SmartLinkNet"'),
+    "# ── PHASE 4: Bridge (dependency: none) ──────────────────────────────",
+    safe("/interface bridge remove [find name=" + bridgeName + "]"),
+    retry("/interface bridge add name=" + bridgeName + ' protocol-mode=rstp comment="SmartLinkNet"'),
   ];
 
   for (const port of bridgePorts) {
     lines.push(safe("/interface bridge port remove [find interface=" + port + "]"));
-    lines.push(safe("/interface bridge port add bridge=" + bridgeName + " interface=" + port + ' comment="SmartLinkNet"'));
+    lines.push(retry("/interface bridge port add bridge=" + bridgeName + " interface=" + port + ' comment="SmartLinkNet"'));
   }
   lines.push(cb("bridge"));
 
   lines.push(
     "",
-    "# 3. Gateway IP",
+    "# ── PHASE 5: IP addressing (dependency: bridge) ─────────────────────",
     safe("/ip address remove [find interface=" + bridgeName + "]"),
-    safe("/ip address add address=" + bridgeAddress + " interface=" + bridgeName + ' comment="SmartLinkNet gateway"'),
+    retry("/ip address add address=" + bridgeAddress + " interface=" + bridgeName + ' comment="SmartLinkNet gateway"'),
     "",
-    "# 4. IP Pool",
+    "# ── PHASE 6: IP Pool (dependency: none) ─────────────────────────────",
     safe("/ip pool remove [find name=" + ispSlug + "-pool]"),
-    "/ip pool add name=" + ispSlug + "-pool ranges=" + poolStart + "-" + poolEnd,
+    retry("/ip pool add name=" + ispSlug + "-pool ranges=" + poolStart + "-" + poolEnd),
     "",
-    "# 5. DHCP Server",
+    "# ── PHASE 7: DHCP Server (dependency: bridge, pool, IP) ─────────────",
     safe("/ip dhcp-server remove [find name=" + ispSlug + "-dhcp]"),
-    "/ip dhcp-server add name=" + ispSlug + "-dhcp interface=" + bridgeName + " address-pool=" + ispSlug + "-pool lease-time=1h disabled=no",
+    retry("/ip dhcp-server add name=" + ispSlug + "-dhcp interface=" + bridgeName + " address-pool=" + ispSlug + "-pool lease-time=1h disabled=no"),
     safe("/ip dhcp-server network remove [find gateway=" + gatewayIp + "]"),
-    "/ip dhcp-server network add address=" + subnet + " gateway=" + gatewayIp + " dns-server=8.8.8.8,8.8.4.4",
+    retry("/ip dhcp-server network add address=" + subnet + " gateway=" + gatewayIp + " dns-server=8.8.8.8,8.8.4.4"),
     cb("network"),
     "",
-    "# 6. NAT",
+    "# ── PHASE 8: DNS ─────────────────────────────────────────────────────",
+    "/ip dns set allow-remote-requests=yes servers=8.8.8.8,8.8.4.4",
+    cb("dns"),
+    "",
+    "# ── PHASE 9: Firewall (dependency: bridge, uplink) ───────────────────",
+    safe('/ip firewall filter remove [find comment~"SmartLinkNet"]'),
+    // INPUT chain
+    '/ip firewall filter add chain=input connection-state=established,related action=accept comment="SmartLinkNet: accept established"',
+    '/ip firewall filter add chain=input connection-state=invalid action=drop comment="SmartLinkNet: drop invalid"',
+    '/ip firewall filter add chain=input protocol=icmp action=accept comment="SmartLinkNet: accept ICMP"',
+    '/ip firewall filter add chain=input in-interface=' + bridgeName + ' protocol=tcp dst-port=8728 action=accept comment="SmartLinkNet: API from LAN"',
+    '/ip firewall filter add chain=input in-interface=' + uplinkInterface + ' action=drop comment="SmartLinkNet: drop WAN input"',
+    // FORWARD chain
+    '/ip firewall filter add chain=forward connection-state=established,related action=accept comment="SmartLinkNet: forward established"',
+    '/ip firewall filter add chain=forward connection-state=invalid action=drop comment="SmartLinkNet: drop invalid forward"',
+    '/ip firewall filter add chain=forward in-interface=' + bridgeName + ' out-interface=' + uplinkInterface + ' action=accept comment="SmartLinkNet: LAN to WAN"',
+    cb("firewall"),
+    "",
+    "# ── PHASE 10: NAT (dependency: uplink) ──────────────────────────────",
     safe('/ip firewall nat remove [find comment="SmartLinkNet NAT"]'),
-    '/ip firewall nat add chain=srcnat out-interface=' + uplinkInterface + ' action=masquerade comment="SmartLinkNet NAT"',
+    retry('/ip firewall nat add chain=srcnat out-interface=' + uplinkInterface + ' action=masquerade comment="SmartLinkNet NAT"'),
     cb("nat"),
     "",
-    "# 7. DNS",
-    "/ip dns set allow-remote-requests=yes servers=8.8.8.8,8.8.4.4",
-    "",
-    "# 8. RADIUS",
+    "# ── PHASE 11: RADIUS (dependency: internet) ─────────────────────────",
     safe('/radius remove [find comment="SmartLinkNet"]'),
   );
 
   if (radiusIp) {
     lines.push(
-      "/radius add service=" + radiusService + " address=" + radiusIp + " secret=" + radiusSecret + " authentication-port=" + radiusAuthPort + " accounting-port=" + radiusAcctPort + ' timeout=3000ms comment="SmartLinkNet"',
+      retry("/radius add service=" + radiusService + " address=" + radiusIp + " secret=" + radiusSecret + " authentication-port=" + radiusAuthPort + " accounting-port=" + radiusAcctPort + ' timeout=3000ms comment="SmartLinkNet"'),
       "/radius incoming set accept=yes port=3799",
-      "/ppp aaa set use-radius=yes",
+      "/ppp aaa set use-radius=yes accounting=yes",
       cb("radius"),
     );
   }
 
+  // ── Hotspot (dependency: bridge, pool, RADIUS) ───────────────────────────
   if (hasHotspot) {
     lines.push(
       "",
-      "# 9. Hotspot",
+      "# ── PHASE 12: Hotspot ───────────────────────────────────────────────",
       safe("/ip hotspot disable [find name=" + ispSlug + "-hotspot]"),
       safe("/ip hotspot remove [find name=" + ispSlug + "-hotspot]"),
       safe("/ip hotspot profile remove [find name=" + ispSlug + "-hs-profile]"),
-      "/ip hotspot profile add name=" + ispSlug + "-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d" + (radiusIp ? " use-radius=yes" : ""),
-      "/ip hotspot add name=" + ispSlug + "-hotspot interface=" + bridgeName + " address-pool=" + ispSlug + "-pool profile=" + ispSlug + "-hs-profile disabled=no",
+      // Profile: RADIUS auth + accounting, captive portal login page pointing to SmartLinkNet portal
+      retry("/ip hotspot profile add name=" + ispSlug + "-hs-profile" +
+        " login-by=http-pap" +
+        " html-directory=hotspot" +
+        " http-cookie-lifetime=1d" +
+        (radiusIp ? " use-radius=yes" : "") +
+        " radius-accounting=yes" +
+        ' login-page="https://' + portalDomain + '/portal"' +
+        ' comment="SmartLinkNet"'),
+      retry("/ip hotspot add name=" + ispSlug + "-hotspot interface=" + bridgeName + " address-pool=" + ispSlug + "-pool profile=" + ispSlug + "-hs-profile disabled=no"),
       cb("hotspot"),
       "",
-      "# Walled Garden",
+      "# Walled Garden (pre-auth access to portal, payment, Supabase)",
       safe('/ip hotspot walled-garden remove [find comment~"SmartLinkNet"]'),
       safe('/ip hotspot walled-garden remove [find comment~"Supabase"]'),
       safe('/ip hotspot walled-garden remove [find comment~"M-Pesa"]'),
-      '/ip hotspot walled-garden add dst-host=smart-link-kenya.vercel.app comment="SmartLinkNet portal"',
+      '/ip hotspot walled-garden add dst-host=' + portalDomain + ' comment="SmartLinkNet portal"',
+      '/ip hotspot walled-garden add dst-host=*.' + portalDomain + ' comment="SmartLinkNet portal assets"',
       '/ip hotspot walled-garden add dst-host=*.supabase.co comment="Supabase"',
+      '/ip hotspot walled-garden add dst-host=*.supabase.com comment="Supabase"',
       '/ip hotspot walled-garden add dst-host=*.safaricom.com comment="M-Pesa"',
       '/ip hotspot walled-garden add dst-host=mpesa.safaricom.co.ke comment="M-Pesa STK"',
-      safe('/ip hotspot walled-garden ip remove [find comment="HTTPS passthrough"]'),
-      '/ip hotspot walled-garden ip add dst-address=0.0.0.0/0 protocol=tcp dst-port=443 comment="HTTPS passthrough"',
+      safe('/ip hotspot walled-garden ip remove [find comment~"SmartLinkNet HTTPS"]'),
+      '/ip hotspot walled-garden ip add dst-address=0.0.0.0/0 protocol=tcp dst-port=443 comment="SmartLinkNet HTTPS passthrough"',
       cb("walled_garden"),
     );
   }
 
+  // ── PPPoE (dependency: bridge, pool, RADIUS) ─────────────────────────────
   if (hasPppoe) {
     lines.push(
       "",
-      "# 10. PPPoE Server",
+      "# ── PHASE 13: PPPoE ─────────────────────────────────────────────────",
       safe("/interface pppoe-server server disable [find service-name=" + ispSlug + "-pppoe]"),
       safe("/interface pppoe-server server remove [find service-name=" + ispSlug + "-pppoe]"),
       safe("/ppp profile remove [find name=" + ispSlug + "-pppoe]"),
-      '/ppp profile add name=' + ispSlug + '-pppoe comment="SmartLinkNet"',
-      "/interface pppoe-server server add service-name=" + ispSlug + "-pppoe interface=" + bridgeName + " default-profile=" + ispSlug + "-pppoe disabled=no",
+      // PPP profile: local address, DNS, RADIUS accounting
+      retry("/ppp profile add name=" + ispSlug + "-pppoe" +
+        " local-address=" + gatewayIp +
+        " dns-server=8.8.8.8,8.8.4.4" +
+        " use-compression=no" +
+        " use-encryption=no" +
+        ' comment="SmartLinkNet"'),
+      retry("/interface pppoe-server server add service-name=" + ispSlug + "-pppoe interface=" + bridgeName + " default-profile=" + ispSlug + "-pppoe one-session-per-host=yes disabled=no"),
       cb("pppoe"),
     );
   }
 
+  // ── Bandwidth queues ─────────────────────────────────────────────────────
   lines.push(
     "",
-    "# 11. API user",
+    "# ── PHASE 14: Bandwidth queues ──────────────────────────────────────",
+    safe('/queue simple remove [find comment~"SmartLinkNet"]'),
+    // Default subscriber queue — ISP can override per-user via RADIUS reply attributes
+    retry('/queue simple add name=' + ispSlug + '-default target=' + subnet + ' max-limit=100M/100M burst-limit=150M/150M burst-threshold=80M/80M burst-time=10s/10s comment="SmartLinkNet default"'),
+    cb("queues"),
+    "",
+    "# ── PHASE 15: API user ───────────────────────────────────────────────",
     "/ip service set api port=8728 disabled=no",
     "/ip service set api-ssl disabled=yes",
     safe('/user remove [find name="' + apiUsername + '"]'),
-    '/user add name="' + apiUsername + '" password="' + apiPassword + '" group=full comment="SmartLinkNet"',
+    retry('/user add name="' + apiUsername + '" password="' + apiPassword + '" group=full comment="SmartLinkNet"'),
     cb("api_user"),
     "",
-    "# 12. Poll script + scheduler",
+    "# ── PHASE 16: Schedulers (poll + telemetry) ─────────────────────────",
     safe("/system script remove [find name=sln-poll-script]"),
     "/system script add name=sln-poll-script source=" + JSON.stringify(pollScriptBody) + ' comment="SmartLinkNet"',
     safe("/system scheduler remove [find name=sln-poll]"),
     '/system scheduler add name=sln-poll interval=1m start-time=startup on-event=sln-poll-script comment="SmartLinkNet"',
+    safe("/system script remove [find name=sln-telemetry-script]"),
+    "/system script add name=sln-telemetry-script source=" + JSON.stringify(telemetryScriptBody) + ' comment="SmartLinkNet"',
+    safe("/system scheduler remove [find name=sln-telemetry]"),
+    '/system scheduler add name=sln-telemetry interval=5m start-time=startup on-event=sln-telemetry-script comment="SmartLinkNet"',
     cb("scheduler"),
     "",
-    "# 13. Done — report complete to cloud",
+    "# ── PHASE 17: Verify all services ───────────────────────────────────",
+    safe("/system script remove [find name=sln-verify]"),
+    "/system script add name=sln-verify source=" + JSON.stringify(verifyScriptBody) + ' comment="SmartLinkNet"',
+    safe("/system script run sln-verify"),
+    "",
+    "# ── PHASE 18: Mark ready + report complete ───────────────────────────",
     cb("complete"),
     ':log info "SmartLinkNet: provisioning complete for ' + safeName + '"',
   );

@@ -5,17 +5,27 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
 const STAGE_MESSAGES: Record<string, string> = {
-  identity:     "✓ Router identity set on device",
-  bridge:       "✓ Bridge interface + ports configured on router",
-  network:      "✓ Gateway IP, DHCP pool, DNS — active on router",
-  nat:          "✓ NAT masquerade — internet routing live",
-  radius:       "✓ RADIUS client configured — cloud AAA connected",
-  hotspot:      "✓ Hotspot (captive portal) — live on router",
-  walled_garden:"✓ Walled garden — portal, M-Pesa, Supabase allowed pre-auth",
-  pppoe:        "✓ PPPoE server — live, subscribers can dial in",
-  api_user:     "✓ API user created on router",
-  scheduler:    "✓ Poll scheduler running — router calls home every 1 min",
-  complete:     "✓ Router fully configured and online",
+  discover:      "✓ Interface discovery complete — existing config synchronized",
+  validate:      "✓ Pre-flight validation passed — internet connectivity confirmed",
+  validate_fail: "✕ Validation failed — no internet on uplink, aborting",
+  backup:        "✓ Router backup saved (sln-pre-provision)",
+  identity:      "✓ Router identity set",
+  bridge:        "✓ Bridge interface + ports configured",
+  network:       "✓ Gateway IP, DHCP server, DHCP pool — active",
+  dns:           "✓ DNS configured (8.8.8.8, 8.8.4.4)",
+  firewall:      "✓ Firewall rules applied — input/forward chains secured",
+  nat:           "✓ NAT masquerade — internet routing live",
+  radius:        "✓ RADIUS client configured — cloud AAA + accounting connected",
+  hotspot:       "✓ Hotspot server + captive portal — live",
+  walled_garden: "✓ Walled garden — portal, M-Pesa, Supabase allowed pre-auth",
+  pppoe:         "✓ PPPoE server — live, subscribers can dial in",
+  queues:        "✓ Bandwidth queues configured with burst support",
+  api_user:      "✓ API user (sln-api) created on router",
+  scheduler:     "✓ Poll (1 min) + telemetry (5 min) schedulers running",
+  verify_ok:     "✓ Service verification passed — all configured services confirmed running",
+  verify_fail:   "⚠ Service verification found issues — check errors",
+  rollback:      "↩ Rollback executed — restored sln-pre-provision backup",
+  complete:      "✓ Router fully provisioned and marked Ready",
 };
 
 serve(async (req: Request) => {
@@ -23,6 +33,7 @@ serve(async (req: Request) => {
     const url = new URL(req.url);
     const routerId = url.searchParams.get("router_id") || "";
     const stage = url.searchParams.get("stage") || "unknown";
+    const errors = url.searchParams.get("errors") || "";
 
     if (!routerId) return new Response("missing router_id", { status: 400 });
 
@@ -35,36 +46,76 @@ serve(async (req: Request) => {
 
     const now = new Date().toISOString();
 
-    // On complete — mark router fully online with real public IP
+    // ── Stage-specific router table updates ───────────────────────────────
     if (stage === "complete") {
+      // Mark router as Ready — fully provisioned
       await db.from("routers").update({
-        status: "online",
+        status: "ready",
         api_connected: true,
         last_seen: now,
         last_poll_at: now,
         provisioned_at: now,
+        ready_at: now,
         ...(publicIp ? { public_ip: publicIp, connection_string: publicIp } : {}),
+      }).eq("id", routerId);
+    }
+
+    if (stage === "backup") {
+      await db.from("routers").update({ backup_at: now }).eq("id", routerId);
+    }
+
+    if (stage === "validate_fail") {
+      await db.from("routers").update({
+        status: "failed",
+        validation_errors: { reason: "no_internet", at: now },
+      }).eq("id", routerId);
+    }
+
+    if (stage === "verify_fail" && errors) {
+      await db.from("routers").update({
+        validation_errors: { verify_errors: errors.split(",").filter(Boolean), at: now },
+      }).eq("id", routerId);
+    }
+
+    if (stage === "rollback") {
+      await db.from("routers").update({
+        status: "rollback",
+        rollback_at: now,
+      }).eq("id", routerId);
+    }
+
+    if (stage === "discover") {
+      // Discovery data arrives via router-poll?discover=1 — callback updates heartbeat
+      // so Step 3 poll detects the router as live immediately after discovery fires
+      await db.from("routers").update({
+        last_seen: now,
+        last_poll_at: now,
+        api_connected: true,
+        ...(publicIp ? { public_ip: publicIp } : {}),
       }).eq("id", routerId);
     }
 
     const { data: router } = await db
       .from("routers")
-      .select("tenant_id, services")
+      .select("tenant_id")
       .eq("id", routerId)
       .maybeSingle();
 
-    const tenantId = router?.tenant_id ?? null;
-
-    const message = stage === "complete" && publicIp
-      ? "✓ Router fully configured and online — public IP: " + publicIp
-      : (STAGE_MESSAGES[stage] || "✓ Stage: " + stage);
+    // Build human-readable message
+    let message = STAGE_MESSAGES[stage] || "✓ Stage: " + stage;
+    if (stage === "complete" && publicIp) {
+      message = "✓ Router fully provisioned and marked Ready — public IP: " + publicIp;
+    }
+    if (stage === "verify_fail" && errors) {
+      message = "⚠ Verification issues: " + errors.replace(/,/g, ", ");
+    }
 
     await db.from("provision_logs").insert({
       router_id: routerId,
-      tenant_id: tenantId,
+      tenant_id: router?.tenant_id ?? null,
       stage,
       message,
-      success: true,
+      success: stage !== "validate_fail" && stage !== "verify_fail" && stage !== "rollback",
     });
 
     return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });

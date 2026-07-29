@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import {
   RefreshCw, ChevronLeft, AlertTriangle,
   Check, Search, Copy, Plus, Edit2, Trash2, RotateCw, X,
+  Cpu, HardDrive, Wifi, Users, Activity,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -76,6 +77,27 @@ type View = "landing" | "wizard";
 type LogLevel = "info" | "success" | "warn" | "error";
 type LogLine = { ts: string; level: LogLevel; icon: string; message: string };
 
+const PROVISION_STAGES = [
+  { key: "discover",      label: "Discover" },
+  { key: "validate",      label: "Validate" },
+  { key: "backup",        label: "Backup" },
+  { key: "identity",      label: "Identity" },
+  { key: "bridge",        label: "Bridge" },
+  { key: "network",       label: "DHCP / IP" },
+  { key: "dns",           label: "DNS" },
+  { key: "firewall",      label: "Firewall" },
+  { key: "nat",           label: "NAT" },
+  { key: "radius",        label: "RADIUS" },
+  { key: "hotspot",       label: "Hotspot",       service: "hotspot" },
+  { key: "walled_garden", label: "Walled Garden",  service: "hotspot" },
+  { key: "pppoe",         label: "PPPoE",          service: "pppoe" },
+  { key: "queues",        label: "Queues" },
+  { key: "api_user",      label: "API User" },
+  { key: "scheduler",     label: "Scheduler" },
+  { key: "verify_ok",     label: "Verified" },
+  { key: "complete",      label: "Ready" },
+];
+
 function RoutersPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -112,6 +134,7 @@ function RoutersPage() {
   // Step 4 — apply logs
   const [logLines, setLogLines] = useState<LogLine[]>([]);
   const [applyDone, setApplyDone] = useState(false);
+  const [completedStages, setCompletedStages] = useState<Set<string>>(new Set());
   const logsEndRef = useRef<HTMLDivElement>(null);
   const realtimeChannelRef = useRef<any | null>(null);
 
@@ -216,6 +239,15 @@ function RoutersPage() {
     return (Date.now() - new Date(r.last_poll_at).getTime()) < 3 * 60 * 1000;
   }
 
+  function routerStatusBadge(r: any): { label: string; color: string } {
+    if (r.status === "ready" && isRouterOnline(r)) return { label: "🟢 Ready", color: "text-success border-success/40 bg-success/10" };
+    if (r.status === "rollback") return { label: "↩ Rollback", color: "text-amber-600 border-amber-400/40 bg-amber-500/10" };
+    if (r.status === "failed") return { label: "✕ Failed", color: "text-destructive border-destructive/40 bg-destructive/10" };
+    if (r.status === "provisioning") return { label: "⚙ Provisioning", color: "text-primary border-primary/40 bg-primary/10" };
+    if (isRouterOnline(r)) return { label: "🟢 Online", color: "text-success border-success/40 bg-success/10" };
+    return { label: "🔴 Offline", color: "text-destructive border-destructive/40 bg-destructive/10" };
+  }
+
   const { online, offline } = useMemo(() => ({
     online: routers.filter(isRouterOnline).length,
     offline: routers.filter((r) => !isRouterOnline(r)).length,
@@ -247,8 +279,12 @@ function RoutersPage() {
     setCheckingOnline(true);
     pollRef.current = setInterval(async () => {
       const { data } = await supabase.from("routers")
-        .select("status, public_ip, ip_address").eq("id", routerId).single();
-      if (data?.status === "online" || data?.status === "active") {
+        .select("status, public_ip, ip_address, last_poll_at").eq("id", routerId).single();
+      // Accept online, active, ready, or provisioning with a recent poll
+      const isLive = ["online", "active", "ready", "provisioning"].includes(data?.status) &&
+        data?.last_poll_at &&
+        (Date.now() - new Date(data.last_poll_at).getTime()) < 3 * 60 * 1000;
+      if (isLive) {
         setRouterOnline(true);
         setRouterPublicIp(data.public_ip || data.ip_address || null);
         setCheckingOnline(false);
@@ -282,6 +318,7 @@ function RoutersPage() {
     setCheckingOnline(false);
     setLogLines([]);
     setApplyDone(false);
+    setCompletedStages(new Set());
     if (pollRef.current) clearInterval(pollRef.current);
     if (realtimeChannelRef.current) {
       try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
@@ -403,8 +440,8 @@ function RoutersPage() {
     setStep(4);
     setApplyDone(false);
     setLogLines([]);
+    setCompletedStages(new Set());
 
-    // Subscribe to provision_logs realtime BEFORE calling apply — streams live logs while request is in-flight
     if (realtimeChannelRef.current) {
       try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
       realtimeChannelRef.current = null;
@@ -418,6 +455,7 @@ function RoutersPage() {
         const row = (payload as any).new;
         if (!row) return;
         addLog(row.message || row.stage, row.success ? "success" : "error");
+        setCompletedStages((prev) => new Set([...prev, row.stage]));
         if (row.stage === "complete") {
           queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
         }
@@ -439,9 +477,14 @@ function RoutersPage() {
       });
       const json = res.ok ? await res.json() : null;
       if (!res.ok || json?.error) {
-        addLog(json?.error === "timeout"
-          ? "Router did not respond within 90s — check it is still online and retry."
-          : `Activation failed: ${json?.error || res.status}`, "error");
+        const errMap: Record<string, string> = {
+          timeout: "Router did not respond within 120s — check it is still online and retry.",
+          router_unreachable: `Router not reachable: ${json?.detail || "ensure provisioning script ran successfully"}`,
+          validate_fail: `Validation failed: ${json?.detail || "no internet on uplink — rollback initiated"}`,
+        };
+        addLog(errMap[json?.error] || `Activation failed: ${json?.error || res.status}`, "error");
+      } else if (json?.warning === "verify_issues") {
+        addLog(`⚠ Provisioning complete but service verification found issues: ${json?.detail || ""}`, "warn");
       }
     } catch (err: any) {
       addLog(err.message || "Activation failed", "error");
@@ -630,10 +673,9 @@ function RoutersPage() {
                         )}
                       </div>
                       <div className="hidden sm:flex items-center">
-                        <span className={`text-xs font-medium px-3 py-1.5 rounded-full border whitespace-nowrap
-                          ${isOnline ? "text-success border-success/40 bg-success/10" : "text-destructive border-destructive/40 bg-destructive/10"}`}>
-                          {isOnline ? "🟢 Online" : "🔴 Offline"}
-                        </span>
+                        {(() => { const b = routerStatusBadge(r); return (
+                          <span className={`text-xs font-medium px-3 py-1.5 rounded-full border whitespace-nowrap ${b.color}`}>{b.label}</span>
+                        ); })()}
                       </div>
                       <div className="hidden sm:flex items-center">
                         <p className="text-sm text-foreground">
@@ -783,18 +825,21 @@ function RoutersPage() {
                       {[
                         { label: "Name", value: viewingRouter.name },
                         { label: "Model", value: viewingRouter.model || "—" },
-                        { label: "Status", value: isRouterOnline(viewingRouter) ? "Online" : "Offline", status: isRouterOnline(viewingRouter) ? "online" : "offline" },
+                        { label: "Status", value: routerStatusBadge(viewingRouter).label, status: viewingRouter.status },
                         { label: "Public IP", value: viewingRouter.public_ip || "—" },
                         { label: "Services", value: viewingRouter.services?.map((s: string) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ") || "—" },
                         { label: "Bridge Ports", value: viewingRouter.bridge_ports?.join(", ") || viewingRouter.bridge_port || "—" },
                         { label: "Uplink", value: viewingRouter.uplink_interface || "ether1" },
                         { label: "Subnet", value: viewingRouter.subnet || "—" },
                         { label: "Polling", value: viewingRouter.api_connected ? "Active (≤1 min)" : "Not polling" },
+                        { label: "Provisioned", value: viewingRouter.provisioned_at ? new Date(viewingRouter.provisioned_at).toLocaleString() : "—" },
+                        { label: "Ready at", value: viewingRouter.ready_at ? new Date(viewingRouter.ready_at).toLocaleString() : "—" },
+                        { label: "Last backup", value: viewingRouter.backup_at ? new Date(viewingRouter.backup_at).toLocaleString() : "—" },
                       ].map((row) => (
                         <div key={row.label} className="flex items-center justify-between py-2.5 border-b border-border/60 last:border-0">
                           <span className="text-xs text-muted-foreground font-medium w-28 shrink-0">{row.label}</span>
                           {row.status ? (
-                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${(row.status === "online" || row.status === "active") ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${(row.status === "online" || row.status === "active" || row.status === "ready") ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>
                               {row.value}
                             </span>
                           ) : (
@@ -802,6 +847,35 @@ function RoutersPage() {
                           )}
                         </div>
                       ))}
+                      {/* Discovered config — WAN detection + interface list */}
+                      {viewingRouter.discovered_config && (
+                        <div className="pt-3">
+                          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Discovered Config</p>
+                          <div className="rounded-xl border border-border bg-muted/30 p-3 space-y-1.5 text-xs">
+                            {[
+                              { label: "Detected WAN", value: viewingRouter.discovered_config.detected_wan || "—" },
+                              { label: "Recommended LAN", value: viewingRouter.discovered_config.recommended_lan?.join(", ") || "—" },
+                              { label: "Interfaces", value: String(viewingRouter.discovered_config.interfaces?.length ?? 0) },
+                              { label: "Bridges", value: viewingRouter.discovered_config.bridges?.join(", ") || "none" },
+                              { label: "DHCP Servers", value: viewingRouter.discovered_config.dhcp_servers?.join(", ") || "none" },
+                              { label: "IP Pools", value: viewingRouter.discovered_config.ip_pools?.join(", ") || "none" },
+                              { label: "Hotspot Servers", value: viewingRouter.discovered_config.hotspot_servers?.join(", ") || "none" },
+                              { label: "PPPoE Servers", value: viewingRouter.discovered_config.pppoe_servers?.join(", ") || "none" },
+                              { label: "NAT Rules", value: String(viewingRouter.discovered_config.nat_rules ?? 0) },
+                              { label: "Firewall Rules", value: String(viewingRouter.discovered_config.firewall_rules ?? 0) },
+                              { label: "DNS Servers", value: viewingRouter.discovered_config.dns_servers || "—" },
+                              { label: "RADIUS Servers", value: String(viewingRouter.discovered_config.radius_servers ?? 0) },
+                              { label: "Queues", value: String(viewingRouter.discovered_config.queues ?? 0) },
+                              { label: "Routes", value: String(viewingRouter.discovered_config.routes ?? 0) },
+                            ].map((row) => (
+                              <div key={row.label} className="flex justify-between">
+                                <span className="text-muted-foreground">{row.label}</span>
+                                <span className="font-mono font-semibold">{row.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -832,12 +906,91 @@ function RoutersPage() {
 
                   {viewTab === "diagnostics" && (
                     <div className="space-y-4">
+                      {/* Live telemetry */}
+                      {(viewingRouter.cpu_load != null || viewingRouter.free_memory != null) && (
+                        <div className="grid grid-cols-2 gap-3">
+                          {viewingRouter.cpu_load != null && (
+                            <div className="rounded-xl border border-border bg-background p-3 flex items-center gap-3">
+                              <Cpu className="w-4 h-4 text-primary shrink-0" />
+                              <div>
+                                <p className="text-xs text-muted-foreground">CPU Load</p>
+                                <p className="text-lg font-bold">{viewingRouter.cpu_load}%</p>
+                              </div>
+                            </div>
+                          )}
+                          {viewingRouter.free_memory != null && viewingRouter.total_memory != null && (
+                            <div className="rounded-xl border border-border bg-background p-3 flex items-center gap-3">
+                              <HardDrive className="w-4 h-4 text-primary shrink-0" />
+                              <div>
+                                <p className="text-xs text-muted-foreground">RAM Free</p>
+                                <p className="text-lg font-bold">{Math.round(viewingRouter.free_memory / 1024 / 1024)}MB</p>
+                              </div>
+                            </div>
+                          )}
+                          {viewingRouter.hotspot_users != null && (
+                            <div className="rounded-xl border border-border bg-background p-3 flex items-center gap-3">
+                              <Wifi className="w-4 h-4 text-primary shrink-0" />
+                              <div>
+                                <p className="text-xs text-muted-foreground">Hotspot Users</p>
+                                <p className="text-lg font-bold">{viewingRouter.hotspot_users}</p>
+                              </div>
+                            </div>
+                          )}
+                          {viewingRouter.pppoe_users != null && (
+                            <div className="rounded-xl border border-border bg-background p-3 flex items-center gap-3">
+                              <Users className="w-4 h-4 text-primary shrink-0" />
+                              <div>
+                                <p className="text-xs text-muted-foreground">PPPoE Users</p>
+                                <p className="text-lg font-bold">{viewingRouter.pppoe_users}</p>
+                              </div>
+                            </div>
+                          )}
+                          {viewingRouter.dhcp_leases != null && (
+                            <div className="rounded-xl border border-border bg-background p-3 flex items-center gap-3">
+                              <Activity className="w-4 h-4 text-primary shrink-0" />
+                              <div>
+                                <p className="text-xs text-muted-foreground">DHCP Leases</p>
+                                <p className="text-lg font-bold">{viewingRouter.dhcp_leases}</p>
+                              </div>
+                            </div>
+                          )}
+                          {viewingRouter.uptime_seconds != null && (
+                            <div className="rounded-xl border border-border bg-background p-3 flex items-center gap-3">
+                              <RefreshCw className="w-4 h-4 text-primary shrink-0" />
+                              <div>
+                                <p className="text-xs text-muted-foreground">Uptime</p>
+                                <p className="text-sm font-bold">{Math.floor(viewingRouter.uptime_seconds / 86400)}d {Math.floor((viewingRouter.uptime_seconds % 86400) / 3600)}h</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {/* Traffic */}
+                      {viewingRouter.interface_traffic && (
+                        <div className="grid grid-cols-2 gap-3 mb-3">
+                          <div className="rounded-xl border border-border bg-background p-3">
+                            <p className="text-xs text-muted-foreground">WAN RX</p>
+                            <p className="text-sm font-bold">{(viewingRouter.interface_traffic.rx_bytes / 1024 / 1024 / 1024).toFixed(2)} GB</p>
+                          </div>
+                          <div className="rounded-xl border border-border bg-background p-3">
+                            <p className="text-xs text-muted-foreground">WAN TX</p>
+                            <p className="text-sm font-bold">{(viewingRouter.interface_traffic.tx_bytes / 1024 / 1024 / 1024).toFixed(2)} GB</p>
+                          </div>
+                        </div>
+                      )}
+                      {/* Health checks */}
                       <div className="rounded-xl border border-border overflow-hidden">
                         {[
-                          { label: "Router Status", ok: isRouterOnline(viewingRouter), okText: "Online", failText: "Offline" },
+                          { label: "Router Status", ok: isRouterOnline(viewingRouter), okText: viewingRouter.status === "ready" ? "Ready" : "Online", failText: "Offline" },
                           { label: "Cloud Polling", ok: !!viewingRouter.api_connected, okText: "Active — polls every 1 min", failText: "Not polling — re-run script" },
+                          { label: "Telemetry", ok: viewingRouter.cpu_load != null, okText: "Syncing every 5 min", failText: "Not yet received" },
+                          { label: "RADIUS", ok: viewingRouter.radius_healthy === true, okText: "Reachable from router", failText: viewingRouter.radius_healthy === false ? "Unreachable — check RADIUS server" : "Not yet verified" },
+                          { label: "Interface Discovery", ok: !!viewingRouter.discovered_config, okText: "Synced — WAN: " + (viewingRouter.discovered_config?.detected_wan || "?"), failText: "Not yet discovered" },
                           { label: "Services", ok: !!viewingRouter.services?.length, okText: viewingRouter.services?.join(", "), failText: "Not configured" },
                           { label: "Bridge Ports", ok: !!viewingRouter.bridge_port || !!viewingRouter.bridge_ports?.length, okText: viewingRouter.bridge_ports?.join(", ") || viewingRouter.bridge_port, failText: "Not set" },
+                          { label: "RouterOS", ok: !!viewingRouter.ros_version, okText: viewingRouter.ros_version || "—", failText: "Unknown" },
+                          { label: "Board", ok: !!viewingRouter.board_name, okText: viewingRouter.board_name || "—", failText: "Unknown" },
+                          { label: "Backup", ok: !!viewingRouter.backup_at, okText: viewingRouter.backup_at ? new Date(viewingRouter.backup_at).toLocaleDateString() : "—", failText: "No backup yet" },
                           { label: "NAS Registered", ok: true, okText: "In RADIUS DB", failText: "Missing" },
                         ].map((check, i, arr) => (
                           <div key={check.label} className={`flex items-center justify-between px-4 py-3 ${i < arr.length - 1 ? "border-b border-border" : ""}`}>
@@ -1028,7 +1181,7 @@ function RoutersPage() {
           <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
             <h2 className="font-bold text-base mb-1">Run provisioning script</h2>
             <p className="text-xs text-muted-foreground mb-5">
-              Open Winbox → New Terminal and paste this one-liner. The router downloads its full config (bridge, DHCP, RADIUS, {selectedServices.map(s => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ")}) and calls home when done.
+              Open Winbox → New Terminal and paste this one-liner. The router downloads and applies its full enterprise config, then calls home.
             </p>
 
             {/* Script box */}
@@ -1046,16 +1199,18 @@ function RoutersPage() {
 
             {/* What the script does */}
             <div className="rounded-xl border border-border bg-muted/30 p-4 mb-5">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Script configures</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Script auto-configures</p>
               <div className="grid grid-cols-2 gap-1">
                 {[
                   "System identity", "Bridge + ports",
                   "Gateway IP", "DHCP pool",
-                  "NAT masquerade", "DNS",
-                  "RADIUS client", ...(hotspot ? ["Hotspot server", "Walled garden"] : []),
-                  ...(pppoe ? ["PPPoE server"] : []),
-                  "API user (sln-api)", "Poll scheduler (1 min)",
-                  "Heartbeat (5 min)",
+                  "DNS (8.8.8.8)", "Firewall rules",
+                  "NAT masquerade", "RADIUS client",
+                  ...(hotspot ? ["Hotspot server", "Captive portal", "Walled garden", "RADIUS accounting"] : []),
+                  ...(pppoe ? ["PPPoE server", "PPP profile", "IP pool"] : []),
+                  "Bandwidth queues", "API user (sln-api)",
+                  "Router backup", "Poll scheduler (1 min)",
+                  "Telemetry (5 min)",
                 ].map((item) => (
                   <div key={item} className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <Check className="w-3 h-3 text-success shrink-0" /> {item}
@@ -1097,9 +1252,28 @@ function RoutersPage() {
               {applyDone
                 ? logLines.some(l => l.level === "error")
                   ? "An error occurred. Check logs and retry."
-                  : "Router fully configured — hotspot and PPPoE live and ready for subscribers."
-                : "Router is applying configuration — each step reports back live as it executes..."}
+                  : "Router fully configured — all services live and ready for subscribers."
+                : "Router is applying configuration — each stage reports back live as it executes..."}
             </p>
+
+            {/* Stage progress tracker */}
+            <div className="rounded-xl border border-border bg-background p-3 mb-4">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Provisioning stages</p>
+              <div className="flex flex-wrap gap-1.5">
+                {PROVISION_STAGES
+                  .filter(s => !s.service || selectedServices.includes(s.service))
+                  .map((s) => {
+                    const done = completedStages.has(s.key);
+                    return (
+                      <span key={s.key} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border font-medium transition-all
+                        ${done ? "bg-success/10 border-success/30 text-success" : "bg-muted border-border text-muted-foreground"}`}>
+                        {done ? <Check className="w-2.5 h-2.5" /> : <span className="w-2.5 h-2.5 rounded-full border border-current opacity-40" />}
+                        {s.label}
+                      </span>
+                    );
+                  })}
+              </div>
+            </div>
 
             {/* Summary grid */}
             <div className="rounded-xl border border-border bg-background mb-5 overflow-hidden">
@@ -1161,9 +1335,9 @@ function RoutersPage() {
                   </>
                 ) : (
                   <>
-                    <p className="text-sm text-success font-medium">✓ Router fully linked and active</p>
+                    <p className="text-sm text-success font-medium">✓ Router provisioned and marked Ready</p>
                     <p className="text-xs text-success/70 mt-1">
-                      NAS registered, RADIUS configured, poll scheduler running. Router will apply any queued config commands within 1 minute.
+                      All services verified, NAS registered, RADIUS + accounting configured, backup saved, telemetry running every 5 min.
                     </p>
                   </>
                 )}
