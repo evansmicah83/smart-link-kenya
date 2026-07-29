@@ -48,16 +48,16 @@ serve(async (req: Request) => {
   const ispSlug = tenant?.slug ?? router.tenant_id;
   const safeName = (router.name || "MikroTik").replace(/"/g, '\\"');
   const companySlug = ispSlug.replace(/[^a-z0-9]/g, "-").toLowerCase();
-  const bridgeName = `${companySlug}-bridge`;
+  const bridgeName = companySlug + "-bridge";
 
   const subnet = router.subnet || "172.31.0.0/16";
   const [networkAddr, prefixLen] = subnet.split("/");
   const parts = networkAddr.split(".").map(Number);
   parts[3] = 1;
   const gatewayIp = parts.join(".");
-  const bridgeAddress = `${gatewayIp}/${prefixLen}`;
-  const poolStart = `${parts[0]}.${parts[1]}.${parts[2]}.10`;
-  const poolEnd = `${parts[0]}.${parts[1]}.${parts[2]}.254`;
+  const bridgeAddress = gatewayIp + "/" + prefixLen;
+  const poolStart = parts[0] + "." + parts[1] + "." + parts[2] + ".10";
+  const poolEnd = parts[0] + "." + parts[1] + "." + parts[2] + ".254";
 
   const bridgePorts: string[] = router.bridge_ports?.length
     ? router.bridge_ports
@@ -76,7 +76,8 @@ serve(async (req: Request) => {
   const radiusAcctPort = radiusServer?.acct_port || 1813;
   const radiusService = hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp";
 
-  const portalLoginPage = `${APP_URL}/portal?isp=${ispSlug}&mac=\\$(mac)&ip=\\$(ip)&url=\\$(link-orig)&dst=\\$(dst-ip)`;
+  // RouterOS hotspot variables use $() — escape the $ so JS doesn't treat them as template vars
+  const portalLoginPage = APP_URL + "/portal?isp=" + ispSlug + "&mac=\\$(mac)&ip=\\$(ip)&url=\\$(link-orig)&dst=\\$(dst-ip)";
 
   const apiUsername = (router.api_username && router.api_username !== "admin") ? router.api_username : "sln-api";
   const apiPassword = router.api_password || Array.from(
@@ -86,116 +87,117 @@ serve(async (req: Request) => {
   await supabase.from("routers").update({ api_username: apiUsername, api_password: apiPassword }).eq("id", router.id);
 
   const supabaseHost = new URL(SUPABASE_URL).host;
-  const callbackUrl = `https://${supabaseHost}/functions/v1/provision-callback?router_id=${router.id}&stage=complete`;
-  const pollUrl = `https://${supabaseHost}/functions/v1/router-poll?router_id=${router.id}&token=${apiPassword}`;
+  const callbackUrl = "https://" + supabaseHost + "/functions/v1/provision-callback?router_id=" + router.id + "&stage=complete";
+  const pollUrl = "https://" + supabaseHost + "/functions/v1/router-poll?router_id=" + router.id + "&token=" + apiPassword;
+  const heartbeatUrl = APP_URL + "/api/heartbeat?router=" + router.id;
 
-  const safe = (cmd: string) => `:do { ${cmd} } on-error={}`;
+  const safe = (cmd: string) => ":do { " + cmd + " } on-error={}";
+
+  // on-event strings: use single quotes around URLs so outer double-quotes are unambiguous to RouterOS
+  const pollOnEvent = ":do { /tool fetch mode=https url='" + pollUrl + "' http-method=post http-data='{}' dst-path=sln-poll.json keep-result=yes } on-error={}";
+  const heartbeatOnEvent = ":do { /tool fetch mode=https url='" + heartbeatUrl + "' keep-result=no } on-error={}";
 
   const lines: string[] = [
-    `# SmartLinkNet — Auto-provisioning script`,
-    `# Router: ${safeName} | Tenant: ${tenant?.name ?? ispSlug}`,
-    `# Generated: ${new Date().toISOString()}`,
-    `# Services: ${services.join(", ") || "none"} | Uplink: ${uplinkInterface}`,
-    ``,
-    `# 1. Identity`,
-    `/system identity set name="${safeName}"`,
-    ``,
-    `# 2. Bridge`,
-    safe(`/interface bridge add name=${bridgeName} protocol-mode=rstp comment="SmartLinkNet"`),
+    "# SmartLinkNet -- Auto-provisioning script",
+    "# Router: " + safeName + " | Tenant: " + (tenant?.name ?? ispSlug),
+    "# Generated: " + new Date().toISOString(),
+    "# Services: " + (services.join(", ") || "none") + " | Uplink: " + uplinkInterface,
+    "",
+    "# 1. Identity",
+    '/system identity set name="' + safeName + '"',
+    "",
+    "# 2. Bridge",
+    safe("/interface bridge add name=" + bridgeName + ' protocol-mode=rstp comment="SmartLinkNet"'),
   ];
 
   for (const port of bridgePorts) {
-    lines.push(safe(`/interface bridge port remove [find interface=${port}]`));
-    lines.push(safe(`/interface bridge port add bridge=${bridgeName} interface=${port} comment="SmartLinkNet"`));
+    lines.push(safe("/interface bridge port remove [find interface=" + port + "]"));
+    lines.push(safe("/interface bridge port add bridge=" + bridgeName + " interface=" + port + ' comment="SmartLinkNet"'));
   }
 
   lines.push(
-    ``,
-    `# 3. Gateway IP on bridge`,
-    safe(`/ip address remove [find interface=${bridgeName}]`),
-    safe(`/ip address add address=${bridgeAddress} interface=${bridgeName} comment="SmartLinkNet gateway"`),
-    ``,
-    `# 4. IP Pool`,
-    safe(`/ip pool remove [find name=${companySlug}-pool]`),
-    `/ip pool add name=${companySlug}-pool ranges=${poolStart}-${poolEnd}`,
-    ``,
-    `# 5. DHCP Server`,
-    safe(`/ip dhcp-server remove [find name=${companySlug}-dhcp]`),
-    `/ip dhcp-server add name=${companySlug}-dhcp interface=${bridgeName} address-pool=${companySlug}-pool lease-time=1h disabled=no`,
-    safe(`/ip dhcp-server network remove [find address=${subnet}]`),
-    `/ip dhcp-server network add address=${subnet} gateway=${gatewayIp} dns-server=8.8.8.8,8.8.4.4`,
-    ``,
-    `# 6. NAT masquerade on uplink`,
-    safe(`/ip firewall nat remove [find comment="SmartLinkNet NAT"]`),
-    `/ip firewall nat add chain=srcnat out-interface=${uplinkInterface} action=masquerade comment="SmartLinkNet NAT"`,
-    ``,
-    `# 7. DNS`,
-    `/ip dns set allow-remote-requests=yes servers=8.8.8.8,8.8.4.4`,
-    ``,
-    `# 8. RADIUS`,
-    safe(`/radius remove [find comment="SmartLinkNet"]`),
-    `/radius add service=${radiusService} address=${radiusHost} secret=${radiusSecret} authentication-port=${radiusAuthPort} accounting-port=${radiusAcctPort} timeout=3000ms comment="SmartLinkNet"`,
-    `/radius incoming set accept=yes port=3799`,
+    "",
+    "# 3. Gateway IP on bridge",
+    safe("/ip address remove [find interface=" + bridgeName + "]"),
+    safe("/ip address add address=" + bridgeAddress + " interface=" + bridgeName + ' comment="SmartLinkNet gateway"'),
+    "",
+    "# 4. IP Pool",
+    safe("/ip pool remove [find name=" + companySlug + "-pool]"),
+    "/ip pool add name=" + companySlug + "-pool ranges=" + poolStart + "-" + poolEnd,
+    "",
+    "# 5. DHCP Server",
+    safe("/ip dhcp-server remove [find name=" + companySlug + "-dhcp]"),
+    "/ip dhcp-server add name=" + companySlug + "-dhcp interface=" + bridgeName + " address-pool=" + companySlug + "-pool lease-time=1h disabled=no",
+    safe("/ip dhcp-server network remove [find address=" + subnet + "]"),
+    "/ip dhcp-server network add address=" + subnet + " gateway=" + gatewayIp + " dns-server=8.8.8.8,8.8.4.4",
+    "",
+    "# 6. NAT masquerade on uplink",
+    safe('/ip firewall nat remove [find comment="SmartLinkNet NAT"]'),
+    "/ip firewall nat add chain=srcnat out-interface=" + uplinkInterface + ' action=masquerade comment="SmartLinkNet NAT"',
+    "",
+    "# 7. DNS",
+    "/ip dns set allow-remote-requests=yes servers=8.8.8.8,8.8.4.4",
+    "",
+    "# 8. RADIUS",
+    safe('/radius remove [find comment="SmartLinkNet"]'),
+    "/radius add service=" + radiusService + " address=" + radiusHost + " secret=" + radiusSecret + " authentication-port=" + radiusAuthPort + " accounting-port=" + radiusAcctPort + ' timeout=3000ms comment="SmartLinkNet"',
+    "/radius incoming set accept=yes port=3799",
   );
 
   if (hasHotspot) {
     lines.push(
-      ``,
-      `# 9. Hotspot`,
-      safe(`/ip hotspot disable [find name=${companySlug}-hotspot]`),
-      safe(`/ip hotspot remove [find name=${companySlug}-hotspot]`),
-      safe(`/ip hotspot profile remove [find name=${companySlug}-hs-profile]`),
-      `/ip hotspot profile add name=${companySlug}-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d use-radius=yes accounting=yes login-page="${portalLoginPage}"`,
-      `/ip hotspot add name=${companySlug}-hotspot interface=${bridgeName} address-pool=${companySlug}-pool profile=${companySlug}-hs-profile disabled=no`,
-      ``,
-      `# Walled Garden`,
-      safe(`/ip hotspot walled-garden remove [find comment~"SmartLinkNet"]`),
-      safe(`/ip hotspot walled-garden remove [find comment~"Supabase"]`),
-      safe(`/ip hotspot walled-garden remove [find comment~"M-Pesa"]`),
-      `/ip hotspot walled-garden add dst-host=smart-link-kenya.vercel.app comment="SmartLinkNet portal"`,
-      `/ip hotspot walled-garden add dst-host=*.supabase.co comment="Supabase"`,
-      `/ip hotspot walled-garden add dst-host=*.safaricom.com comment="M-Pesa"`,
-      `/ip hotspot walled-garden add dst-host=mpesa.safaricom.co.ke comment="M-Pesa STK"`,
-      safe(`/ip hotspot walled-garden ip remove [find comment="HTTPS passthrough"]`),
-      `/ip hotspot walled-garden ip add dst-address=0.0.0.0/0 protocol=tcp dst-port=443 comment="HTTPS passthrough"`,
+      "",
+      "# 9. Hotspot",
+      safe("/ip hotspot disable [find name=" + companySlug + "-hotspot]"),
+      safe("/ip hotspot remove [find name=" + companySlug + "-hotspot]"),
+      safe("/ip hotspot profile remove [find name=" + companySlug + "-hs-profile]"),
+      "/ip hotspot profile add name=" + companySlug + "-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d use-radius=yes accounting=yes login-page=\"" + portalLoginPage + '"',
+      "/ip hotspot add name=" + companySlug + "-hotspot interface=" + bridgeName + " address-pool=" + companySlug + "-pool profile=" + companySlug + "-hs-profile disabled=no",
+      "",
+      "# Walled Garden",
+      safe('/ip hotspot walled-garden remove [find comment~"SmartLinkNet"]'),
+      safe('/ip hotspot walled-garden remove [find comment~"Supabase"]'),
+      safe('/ip hotspot walled-garden remove [find comment~"M-Pesa"]'),
+      '/ip hotspot walled-garden add dst-host=smart-link-kenya.vercel.app comment="SmartLinkNet portal"',
+      '/ip hotspot walled-garden add dst-host=*.supabase.co comment="Supabase"',
+      '/ip hotspot walled-garden add dst-host=*.safaricom.com comment="M-Pesa"',
+      '/ip hotspot walled-garden add dst-host=mpesa.safaricom.co.ke comment="M-Pesa STK"',
+      safe('/ip hotspot walled-garden ip remove [find comment="HTTPS passthrough"]'),
+      '/ip hotspot walled-garden ip add dst-address=0.0.0.0/0 protocol=tcp dst-port=443 comment="HTTPS passthrough"',
     );
   }
 
   if (hasPppoe) {
     lines.push(
-      ``,
-      `# 10. PPPoE Server`,
-      safe(`/interface pppoe-server server disable [find name=${companySlug}-pppoe]`),
-      safe(`/interface pppoe-server server remove [find name=${companySlug}-pppoe]`),
-      safe(`/ppp profile remove [find name=${companySlug}-pppoe]`),
-      `/ppp profile add name=${companySlug}-pppoe use-radius=yes comment="SmartLinkNet"`,
-      `/interface pppoe-server server add name=${companySlug}-pppoe interface=${bridgeName} default-profile=${companySlug}-pppoe disabled=no`,
+      "",
+      "# 10. PPPoE Server",
+      safe("/interface pppoe-server server disable [find name=" + companySlug + "-pppoe]"),
+      safe("/interface pppoe-server server remove [find name=" + companySlug + "-pppoe]"),
+      safe("/ppp profile remove [find name=" + companySlug + "-pppoe]"),
+      '/ppp profile add name=' + companySlug + '-pppoe use-radius=yes comment="SmartLinkNet"',
+      "/interface pppoe-server server add name=" + companySlug + "-pppoe interface=" + bridgeName + " default-profile=" + companySlug + "-pppoe disabled=no",
     );
   }
 
-  // Scheduler on-event must be a single quoted string — no line continuations in .rsc
-  const pollOnEvent = `:do { /tool fetch mode=https url="${pollUrl}" http-method=post http-data="{}" dst-path=sln-poll.json keep-result=yes } on-error={}`;
-  const heartbeatOnEvent = `:do { /tool fetch mode=https url="${APP_URL}/api/heartbeat?router=${router.id}" keep-result=no } on-error={}`;
-
   lines.push(
-    ``,
-    `# 11. API user and port`,
-    `/ip service set api port=8728 disabled=no`,
-    `/ip service set api-ssl disabled=yes`,
-    safe(`/user remove [find name="${apiUsername}"]`),
-    `/user add name="${apiUsername}" password="${apiPassword}" group=full comment="SmartLinkNet"`,
-    ``,
-    `# 12. Poll scheduler — NAT-safe pull model`,
-    safe(`/system scheduler remove [find name=sln-poll]`),
-    `/system scheduler add name=sln-poll interval=1m start-time=startup on-event="${pollOnEvent}" comment="SmartLinkNet"`,
-    ``,
-    `# 13. Heartbeat scheduler`,
-    safe(`/system scheduler remove [find name=sln-heartbeat]`),
-    `/system scheduler add name=sln-heartbeat interval=5m start-time=startup on-event="${heartbeatOnEvent}" comment="SmartLinkNet"`,
-    ``,
-    `# 14. Report provisioning complete`,
-    safe(`/tool fetch mode=https url="${callbackUrl}" keep-result=no`),
-    `:log info "SmartLinkNet: provisioning complete for ${safeName}"`,
+    "",
+    "# 11. API user and port",
+    "/ip service set api port=8728 disabled=no",
+    "/ip service set api-ssl disabled=yes",
+    safe('/user remove [find name="' + apiUsername + '"]'),
+    '/user add name="' + apiUsername + '" password="' + apiPassword + '" group=full comment="SmartLinkNet"',
+    "",
+    "# 12. Poll scheduler -- NAT-safe pull model",
+    safe("/system scheduler remove [find name=sln-poll]"),
+    '/system scheduler add name=sln-poll interval=1m start-time=startup on-event="' + pollOnEvent + '" comment="SmartLinkNet"',
+    "",
+    "# 13. Heartbeat scheduler",
+    safe("/system scheduler remove [find name=sln-heartbeat]"),
+    '/system scheduler add name=sln-heartbeat interval=5m start-time=startup on-event="' + heartbeatOnEvent + '" comment="SmartLinkNet"',
+    "",
+    "# 14. Report provisioning complete",
+    safe('/tool fetch mode=https url="' + callbackUrl + '" keep-result=no'),
+    ':log info "SmartLinkNet: provisioning complete for ' + safeName + '"',
   );
 
   const script = lines.join("\n");
