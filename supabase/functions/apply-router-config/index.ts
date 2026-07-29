@@ -59,7 +59,7 @@ serve(async (req: Request) => {
     if (!router) return json({ error: "Router not found" }, 404);
 
     const log = async (stage: string, message: string, success: boolean) => {
-      await db.from("provision_logs").insert({ router_id: routerId, tenant_id: tenantId, stage, message, success }).catch(() => {});
+      await db.from("provision_logs").insert({ router_id: routerId, tenant_id: tenantId, stage, message, success }).then(() => {}).catch(() => {});
     };
 
     // ── 1. Resolve RADIUS ──────────────────────────────────────────────────
@@ -107,10 +107,10 @@ serve(async (req: Request) => {
       const { data: tenantRow } = await db.from("tenants").select("slug").eq("id", tenantId).maybeSingle();
       const ispSlug = (tenantRow as any)?.slug ?? tenantId;
       const portalLoginPage = `${APP_URL}/portal?isp=${ispSlug}&mac=$(mac)&ip=$(ip)&url=$(link-orig)&dst=$(dst-ip)`;
-      await (db as any).from("settings").upsert(
+      await db.from("settings").upsert(
         { tenant_id: tenantId, key: "hotspot_login_page", value: portalLoginPage },
         { onConflict: "tenant_id,key" }
-      ).catch(() => {});
+      ).then(() => {}).catch(() => {});
     }
 
     // ── 5. Check if router has polled recently (within 3 minutes) ──────────
