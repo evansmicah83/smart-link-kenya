@@ -143,8 +143,13 @@ serve(async (req: Request) => {
 
   const safe = (cmd: string) => ":do { " + cmd + " } on-error={}";
 
-  // Poll on-event: fetch commands, if re_provision pending re-fetch and import provision script
-  const pollOnEvent = ":do { /tool fetch mode=https url='" + pollUrl + "' http-method=post http-data='{}' dst-path=sln-poll.rsc keep-result=yes; /import sln-poll.rsc } on-error={}";
+  // Poll on-event: POST to router-poll, get JSON back, if re_provision command present re-fetch full script
+  // RouterOS: fetch response to file, read it, check for re_provision keyword, fetch provision URL if found
+  const pollOnEvent = ":do { /tool fetch mode=https url='" + pollUrl + "' http-method=post http-data='{}' dst-path=sln-poll.json keep-result=yes } on-error={}";
+
+  // Separate re-provision check script — runs after poll, reads sln-poll.json and re-provisions if needed
+  // This is added as a one-time scheduler by apply-router-config via the re_provision command
+  // The poll scheduler itself stays simple — just heartbeat + file fetch
   const heartbeatOnEvent = ":do { /tool fetch mode=https url='" + heartbeatUrl + "' keep-result=no } on-error={}";
 
 const lines: string[] = [

@@ -167,7 +167,7 @@ function RoutersPage() {
   });
   const liveSessions = liveSessionsQuery.data ?? 0;
 
-  // ── Realtime: routers table ───────────────────────────────────
+  // ── Realtime: routers table — drives live status with no refresh needed ──
   const routersRealtimeRef = useRef<any | null>(null);
   useEffect(() => {
     if (!tenantId) return;
@@ -176,8 +176,24 @@ function RoutersPage() {
       routersRealtimeRef.current = null;
     }
     const ch = supabase.channel(`routers-rt-${tenantId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "routers", filter: `tenant_id=eq.${tenantId}` },
-        () => queryClient.invalidateQueries({ queryKey: ["routers", tenantId] }))
+      .on("postgres_changes", {
+        event: "UPDATE", schema: "public", table: "routers",
+        filter: `tenant_id=eq.${tenantId}`,
+      }, (payload) => {
+        // Patch the cached query data in-place so UI updates instantly without full refetch
+        queryClient.setQueryData(["routers", tenantId], (old: any[]) => {
+          if (!old) return old;
+          return old.map((r) => r.id === payload.new.id ? { ...r, ...payload.new } : r);
+        });
+      })
+      .on("postgres_changes", {
+        event: "INSERT", schema: "public", table: "routers",
+        filter: `tenant_id=eq.${tenantId}`,
+      }, () => queryClient.invalidateQueries({ queryKey: ["routers", tenantId] }))
+      .on("postgres_changes", {
+        event: "DELETE", schema: "public", table: "routers",
+        filter: `tenant_id=eq.${tenantId}`,
+      }, () => queryClient.invalidateQueries({ queryKey: ["routers", tenantId] }))
       .subscribe();
     routersRealtimeRef.current = ch;
     return () => { try { supabase.removeChannel(ch); } catch {} routersRealtimeRef.current = null; };
@@ -194,14 +210,20 @@ function RoutersPage() {
   }, []);
 
   const routers = routersQuery.data ?? [];
+  // Derive real online status from last_poll_at — router is online only if it polled within 3 minutes
+  function isRouterOnline(r: any): boolean {
+    if (!r.last_poll_at) return false;
+    return (Date.now() - new Date(r.last_poll_at).getTime()) < 3 * 60 * 1000;
+  }
+
   const { online, offline } = useMemo(() => ({
-    online: routers.filter((r) => r.status === "online" || r.status === "active").length,
-    offline: routers.filter((r) => r.status === "offline" || r.status === "pending").length,
+    online: routers.filter(isRouterOnline).length,
+    offline: routers.filter((r) => !isRouterOnline(r)).length,
   }), [routers]);
 
   const filtered = useMemo(() => routers.filter((r) => {
-    if (filter === "online" && r.status !== "online" && r.status !== "active") return false;
-    if (filter === "offline" && r.status !== "offline" && r.status !== "pending") return false;
+    if (filter === "online" && !isRouterOnline(r)) return false;
+    if (filter === "offline" && isRouterOnline(r)) return false;
     const q = search.toLowerCase();
     return !q || r.name?.toLowerCase().includes(q) || r.model?.toLowerCase().includes(q);
   }), [routers, filter, search]);
