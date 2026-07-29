@@ -76,10 +76,7 @@ serve(async (req: Request) => {
   const radiusAcctPort = radiusServer?.acct_port || 1813;
   const radiusService = hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp";
 
-  // RouterOS hotspot variables use $() — escape the $ so JS doesn't treat them as template vars
-  const portalLoginPage = APP_URL + "/portal?isp=" + ispSlug + "&mac=$(mac)&ip=$(ip)&url=$(link-orig)&dst=$(dst-ip)";
-
-  const apiUsername = (router.api_username && router.api_username !== "admin") ? router.api_username : "sln-api";
+const apiUsername = (router.api_username && router.api_username !== "admin") ? router.api_username : "sln-api";
   const apiPassword = router.api_password || Array.from(
     crypto.getRandomValues(new Uint8Array(16))
   ).map((b: number) => b.toString(16).padStart(2, "0")).join("");
@@ -145,13 +142,16 @@ serve(async (req: Request) => {
   );
 
   if (hasHotspot) {
+    // Build portal URL without $ variables — hotspot will append them via login-page parameter substitution
+    // RouterOS hotspot login-page does NOT support $() substitution in .rsc — set a static base URL instead
+    const staticPortalUrl = APP_URL + "/portal?isp=" + ispSlug;
     lines.push(
       "",
       "# 9. Hotspot",
       safe("/ip hotspot disable [find name=" + companySlug + "-hotspot]"),
       safe("/ip hotspot remove [find name=" + companySlug + "-hotspot]"),
       safe("/ip hotspot profile remove [find name=" + companySlug + "-hs-profile]"),
-      "/ip hotspot profile add name=" + companySlug + "-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d use-radius=yes accounting=yes login-page='" + portalLoginPage + "'",
+      "/ip hotspot profile add name=" + companySlug + "-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d use-radius=yes accounting=yes login-page=\"" + staticPortalUrl + "\"",
       "/ip hotspot add name=" + companySlug + "-hotspot interface=" + bridgeName + " address-pool=" + companySlug + "-pool profile=" + companySlug + "-hs-profile disabled=no",
       "",
       "# Walled Garden",
