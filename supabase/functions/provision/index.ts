@@ -200,7 +200,7 @@ serve(async (req: Request) => {
       safe("/ip hotspot disable [find name=" + companySlug + "-hotspot]"),
       safe("/ip hotspot remove [find name=" + companySlug + "-hotspot]"),
       safe("/ip hotspot profile remove [find name=" + companySlug + "-hs-profile]"),
-      "/ip hotspot profile add name=" + companySlug + "-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d" + (hasRadius ? " use-radius=yes accounting=yes" : "") + ' login-page="' + staticPortalUrl + '"',
+      "/ip hotspot profile add name=" + companySlug + "-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d" + (hasRadius ? " use-radius=yes" : "") + ' login-page="' + staticPortalUrl + '"',
       "/ip hotspot add name=" + companySlug + "-hotspot interface=" + bridgeName + " address-pool=" + companySlug + "-pool profile=" + companySlug + "-hs-profile disabled=no",
       "",
       "# Walled Garden",
