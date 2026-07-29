@@ -15,6 +15,12 @@
 --   8. fn_trigger_coa_on_subscription: queues CoA/Disconnect via job_queue
 -- ============================================================
 
+-- ── 0. Ensure radius_profiles.simultaneous_use column exists ────────────────
+-- Migration 20260628 added this column but may not have run if ip_pools table
+-- was absent (causing the whole migration to abort at the FK reference).
+ALTER TABLE public.radius_profiles
+  ADD COLUMN IF NOT EXISTS simultaneous_use INTEGER;
+
 -- ── 1. Re-create radcheck with correct grants ─────────────────────────────
 -- FreeRADIUS connects as the postgres user (DB_USER in setup.sh).
 -- service_role alone is not enough — postgres user needs direct SELECT.
