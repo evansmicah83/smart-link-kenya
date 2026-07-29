@@ -77,7 +77,7 @@ serve(async (req: Request) => {
   const radiusService = hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp";
 
   // RouterOS hotspot variables use $() — escape the $ so JS doesn't treat them as template vars
-  const portalLoginPage = APP_URL + "/portal?isp=" + ispSlug + "&mac=\\$(mac)&ip=\\$(ip)&url=\\$(link-orig)&dst=\\$(dst-ip)";
+  const portalLoginPage = APP_URL + "/portal?isp=" + ispSlug + "&mac=$(mac)&ip=$(ip)&url=$(link-orig)&dst=$(dst-ip)";
 
   const apiUsername = (router.api_username && router.api_username !== "admin") ? router.api_username : "sln-api";
   const apiPassword = router.api_password || Array.from(
