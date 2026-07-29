@@ -58,11 +58,11 @@ serve(async (req: Request) => {
     const { data: router } = await db.from("routers").select("*").eq("id", routerId).eq("tenant_id", tenantId).maybeSingle();
     if (!router) return resp({ error: "Router not found" }, 404);
 
-    const log = async (stage: string, message: string, success: boolean) => {
+    const log = async (stage: string, message: string, success = true) => {
       await db.from("provision_logs").insert({ router_id: routerId, tenant_id: tenantId, stage, message, success });
     };
 
-    await log("start", "Registering router — setting up cloud services...", true);
+    await log("start", "Registering router — setting up cloud services...");
 
     // ── 1. Resolve cloud IP ───────────────────────────────────────────────
     const supabaseHost = new URL(SUPABASE_URL).host;
@@ -95,7 +95,7 @@ serve(async (req: Request) => {
     }
 
     const radiusHost = radiusServer?.host !== "pending" ? radiusServer?.host : systemIp;
-    await log("radius_db", "RADIUS ready — " + (radiusHost || "pending") + ":1812", !!radiusHost);
+    await log("radius_db", "RADIUS ready — " + (radiusHost || "pending") + ":1812");
 
     // ── 3. Upsert NAS device ──────────────────────────────────────────────
     const { data: existingNas } = await db.from("nas_devices").select("id").eq("router_id", routerId).maybeSingle();
@@ -114,49 +114,59 @@ serve(async (req: Request) => {
     } else {
       await db.from("nas_devices").insert(nasPayload);
     }
-    await log("nas_db", "NAS registered: \"" + router.name + "\"", true);
+    await log("nas_db", "NAS registered: \"" + router.name + "\"");
 
-    // ── 4. Immediately trigger router to re-fetch + run provision script ──
-    // Instead of queuing and waiting for the 1-min poll scheduler,
-    // we call router-poll directly right now using the router's api_password.
-    // This makes the router fetch and run the full config script in seconds.
+    // ── 4. Queue re_provision + immediately trigger router-poll ──────────
+    // Delete any stale pending re_provision commands first
+    await db.from("router_commands").delete()
+      .eq("router_id", routerId).eq("command", "re_provision").eq("status", "pending");
+
     const provisionUrl = "https://" + supabaseHost + "/functions/v1/provision?token=" + router.provision_token;
-    const apiPassword = router.api_password;
 
-    if (apiPassword) {
-      // Insert re_provision command
-      await db.from("router_commands").delete()
-        .eq("router_id", routerId).eq("command", "re_provision").eq("status", "pending");
+    await db.from("router_commands").insert({
+      router_id: routerId, tenant_id: tenantId,
+      command: "re_provision",
+      payload: { provision_url: provisionUrl },
+      status: "pending",
+      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    });
 
-      await db.from("router_commands").insert({
-        router_id: routerId, tenant_id: tenantId,
-        command: "re_provision",
-        payload: { provision_url: provisionUrl },
-        status: "pending",
-        expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      });
+    // Immediately call router-poll on behalf of the router so it gets the provision URL now
+    // (bypasses the 1-min scheduler — router picks it up in seconds)
+    const pollUrl = "https://" + supabaseHost + "/functions/v1/router-poll?router_id=" + routerId + "&token=" + router.api_password;
+    try { await fetch(pollUrl, { method: "GET" }); } catch { /* router will pick up on next scheduler tick */ }
 
-      // Immediately call router-poll on behalf of the router — this returns the provision URL
-      // The router's sln-poll-script will pick it up on its next tick (already running)
-      // But we also directly fetch the provision script and trigger it via a server-side call
-      // so the router gets it within seconds, not waiting for the 1-min scheduler
-      const pollTriggerUrl = "https://" + supabaseHost + "/functions/v1/router-poll?router_id=" + routerId + "&token=" + apiPassword;
-      try {
-        await fetch(pollTriggerUrl, { method: "GET" });
-      } catch { /* ignore — router will pick up on next poll if this fails */ }
+    await log("triggered", "Configuration script sent — router is applying: " + (router.services?.join(", ") || "none"));
 
-      await log("triggered",
-        "Configuration script sent — router is applying: " + (router.services?.join(", ") || "none"),
-        true
-      );
-    } else {
-      await log("triggered",
-        "Script queued — router will apply on next poll (≤1 min)",
-        true
-      );
+    // ── 5. Wait for router to finish all stages (up to 90s) ──────────────
+    // Poll provision_logs every 2s until stage=complete appears.
+    // This keeps the HTTP connection open so the frontend knows when everything is truly done.
+    const deadline = Date.now() + 90_000;
+    let complete = false;
+
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000));
+
+      const { data: completedLog } = await db
+        .from("provision_logs")
+        .select("id")
+        .eq("router_id", routerId)
+        .eq("stage", "complete")
+        .gte("created_at", new Date(Date.now() - 120_000).toISOString())
+        .maybeSingle();
+
+      if (completedLog) {
+        complete = true;
+        break;
+      }
     }
 
-    return resp({ ok: true });
+    if (!complete) {
+      await log("timeout", "Router did not complete configuration within 90s — check router connectivity", false);
+      return resp({ ok: false, error: "timeout" });
+    }
+
+    return resp({ ok: true, complete: true });
 
   } catch (err: any) {
     console.error("apply-router-config error:", err?.message);

@@ -404,14 +404,11 @@ function RoutersPage() {
     setApplyDone(false);
     setLogLines([]);
 
-    // Subscribe to provision_logs realtime BEFORE calling apply
+    // Subscribe to provision_logs realtime BEFORE calling apply — streams live logs while request is in-flight
     if (realtimeChannelRef.current) {
       try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
       realtimeChannelRef.current = null;
     }
-
-    const safetyTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
-    const gotFirstLog = { current: false };
 
     const channel = supabase.channel(`provision-logs-${routerId}`)
       .on("postgres_changes", {
@@ -420,49 +417,35 @@ function RoutersPage() {
       }, (payload) => {
         const row = (payload as any).new;
         if (!row) return;
-        if (!gotFirstLog.current) {
-          gotFirstLog.current = true;
-          if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
-        }
-        const level: LogLevel = row.success ? "success" : "error";
-        addLog(row.message || row.stage, level);
+        addLog(row.message || row.stage, row.success ? "success" : "error");
         if (row.stage === "complete") {
-          if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
-          setApplyDone(true);
           queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
         }
       })
       .subscribe();
     realtimeChannelRef.current = channel;
 
-    addLog("Activating router — running full configuration now...", "info");
-
-    // Safety timeout — 30s, the router is already online so callbacks fire immediately
-    const safetyTimer = setTimeout(() => {
-      if (gotFirstLog.current) return;
-      addLog("No response — check router is still online and retry.", "error");
-      setApplyDone(true);
-    }, 30_000);
-    safetyTimerRef.current = safetyTimer;
+    addLog("Activating router — backend is configuring everything now...", "info");
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token ?? null;
-      // apply-router-config registers NAS/RADIUS in DB then immediately triggers
-      // the router to re-fetch and re-run the provision script via router-poll
+      // apply-router-config triggers the router, then waits server-side until
+      // stage=complete fires — only returns when the router is fully configured.
       const res = await fetch(`${SUPABASE_FUNCTIONS}/apply-router-config`, {
         method: "POST",
         headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ routerId }),
       });
-      if (!res.ok) {
-        clearTimeout(safetyTimer);
-        addLog(`Activation failed: ${await res.text()}`, "error");
-        setApplyDone(true);
+      const json = res.ok ? await res.json() : null;
+      if (!res.ok || json?.error) {
+        addLog(json?.error === "timeout"
+          ? "Router did not respond within 90s — check it is still online and retry."
+          : `Activation failed: ${json?.error || res.status}`, "error");
       }
     } catch (err: any) {
-      clearTimeout(safetyTimer);
       addLog(err.message || "Activation failed", "error");
+    } finally {
       setApplyDone(true);
     }
   }
