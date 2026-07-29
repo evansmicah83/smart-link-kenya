@@ -1,18 +1,3 @@
-/**
- * router-poll — NAT-safe command delivery
- *
- * The MikroTik router calls this endpoint every 1 minute via its scheduler.
- * It reports its current status and receives any pending commands to execute.
- * The router then executes the commands locally and calls router-poll again
- * with the results. This works through ANY NAT — no inbound connections needed.
- *
- * Called by RouterOS scheduler:
- *   /tool fetch mode=https url="<SUPABASE_URL>/functions/v1/router-poll?router_id=<id>&token=<api_password>" \
- *     http-method=post http-data="" dst-path=sln-cmds.json
- *   :local cmds [/file get sln-cmds.json contents]
- *   # parse and execute commands from cmds
- */
-
 import { serve } from "https://deno.land/std@0.201.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -33,61 +18,43 @@ serve(async (req: Request) => {
   const token = url.searchParams.get("token") || "";
 
   if (!routerId || !token) {
-    return new Response(JSON.stringify({ error: "missing router_id or token" }), {
-      status: 400, headers: { ...CORS, "content-type": "application/json" },
-    });
+    return new Response(":log warning \"sln-poll: missing params\"", { status: 400, headers: { "content-type": "text/plain" } });
   }
 
   const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { global: { fetch } });
 
-  // Authenticate: token must match api_password stored in DB
   const { data: router } = await db
     .from("routers")
-    .select("id, tenant_id, api_password, name, status")
+    .select("id, tenant_id, api_password, name, provision_token")
     .eq("id", routerId)
     .maybeSingle();
 
   if (!router || router.api_password !== token) {
-    return new Response(JSON.stringify({ error: "unauthorized" }), {
-      status: 401, headers: { ...CORS, "content-type": "application/json" },
-    });
+    return new Response(":log warning \"sln-poll: unauthorized\"", { status: 401, headers: { "content-type": "text/plain" } });
   }
 
   const now = new Date().toISOString();
 
-  // Parse body — router may POST results of previously fetched commands
+  // Process any command results posted by router
   let body: Record<string, unknown> = {};
   try {
     if (req.method === "POST") {
       const text = await req.text();
-      if (text) body = JSON.parse(text);
+      if (text && text.trim().startsWith("{")) body = JSON.parse(text);
     }
-  } catch { /* ignore parse errors */ }
+  } catch { /* ignore */ }
 
-  // Process command results if router is reporting back
   if (body.results && Array.isArray(body.results)) {
-    for (const r of body.results as Array<{ id: string; success: boolean; result?: unknown; error?: string }>) {
+    for (const r of body.results as Array<{ id: string; success: boolean; error?: string }>) {
       await db.from("router_commands").update({
         status: r.success ? "done" : "failed",
-        result: r.result ?? null,
         error: r.error ?? null,
         completed_at: now,
       }).eq("id", r.id).eq("router_id", routerId);
-
-      // Log to provision_logs so UI realtime picks it up
-      await db.from("provision_logs").insert({
-        router_id: routerId,
-        tenant_id: router.tenant_id,
-        stage: r.success ? "command_done" : "command_failed",
-        message: r.success
-          ? `Command completed successfully`
-          : `Command failed: ${r.error ?? "unknown error"}`,
-        success: r.success,
-      }).catch(() => {});
     }
   }
 
-  // Update router heartbeat
+  // Update heartbeat
   await db.from("routers").update({
     status: "online",
     last_seen: now,
@@ -95,7 +62,7 @@ serve(async (req: Request) => {
     api_connected: true,
   }).eq("id", routerId);
 
-  // Fetch pending commands for this router (not expired)
+  // Fetch pending commands
   const { data: commands } = await db
     .from("router_commands")
     .select("id, command, payload")
@@ -103,17 +70,50 @@ serve(async (req: Request) => {
     .eq("status", "pending")
     .gt("expires_at", now)
     .order("created_at", { ascending: true })
-    .limit(5);
+    .limit(1);
 
-  if (commands?.length) {
-    // Mark them as running
-    const ids = commands.map((c: any) => c.id);
-    await db.from("router_commands").update({ status: "running", started_at: now })
-      .in("id", ids);
+  // No pending commands — return empty script (router imports it, nothing happens)
+  if (!commands?.length) {
+    return new Response(
+      ":log debug \"sln-poll: ok, no commands\"",
+      { status: 200, headers: { "content-type": "text/plain" } }
+    );
   }
 
-  return new Response(
-    JSON.stringify({ commands: commands ?? [], ts: now }),
-    { status: 200, headers: { ...CORS, "content-type": "application/json" } },
-  );
+  const cmd = commands[0];
+
+  // Mark command as running
+  await db.from("router_commands").update({ status: "running", started_at: now }).eq("id", cmd.id);
+
+  // Handle re_provision — return a RouterOS script that re-fetches and re-imports the provision script
+  if (cmd.command === "re_provision") {
+    const provisionUrl = (cmd.payload as any)?.provision_url || "";
+
+    // Mark done immediately — the script will run on the router
+    await db.from("router_commands").update({ status: "done", completed_at: now }).eq("id", cmd.id);
+
+    await db.from("provision_logs").insert({
+      router_id: routerId,
+      tenant_id: router.tenant_id,
+      stage: "re_provision",
+      message: "Router re-provisioning with full config including RADIUS",
+      success: true,
+    });
+
+    const script = [
+      "# SmartLinkNet re-provision",
+      ":log info \"sln-poll: re-provisioning router\"",
+      ":do {",
+      " /tool fetch mode=https url=\"" + provisionUrl + "\" dst-path=sln-provision.rsc keep-result=yes",
+      " :delay 3s",
+      " /import sln-provision.rsc",
+      "} on-error={ :log error \"sln-poll: re-provision failed\" }",
+    ].join("\n");
+
+    return new Response(script, { status: 200, headers: { "content-type": "text/plain" } });
+  }
+
+  // Unknown command — mark done and return empty script
+  await db.from("router_commands").update({ status: "done", completed_at: now }).eq("id", cmd.id);
+  return new Response(":log info \"sln-poll: command acknowledged\"", { status: 200, headers: { "content-type": "text/plain" } });
 });

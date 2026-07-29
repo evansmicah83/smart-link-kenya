@@ -143,7 +143,8 @@ serve(async (req: Request) => {
 
   const safe = (cmd: string) => ":do { " + cmd + " } on-error={}";
 
-  const pollOnEvent = ":do { /tool fetch mode=https url='" + pollUrl + "' http-method=post http-data='{}' dst-path=sln-poll.json keep-result=yes } on-error={}";
+  // Poll on-event: fetch commands, if re_provision pending re-fetch and import provision script
+  const pollOnEvent = ":do { /tool fetch mode=https url='" + pollUrl + "' http-method=post http-data='{}' dst-path=sln-poll.rsc keep-result=yes; /import sln-poll.rsc } on-error={}";
   const heartbeatOnEvent = ":do { /tool fetch mode=https url='" + heartbeatUrl + "' keep-result=no } on-error={}";
 
 const lines: string[] = [
