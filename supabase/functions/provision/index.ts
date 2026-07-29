@@ -186,6 +186,7 @@ const lines: string[] = [
     lines.push(
       "/radius add service=" + radiusService + " address=" + radiusIp + " secret=" + radiusSecret + " authentication-port=" + radiusAuthPort + " accounting-port=" + radiusAcctPort + ' timeout=3000ms comment="SmartLinkNet"',
       "/radius incoming set accept=yes port=3799",
+      "/ppp aaa set use-radius=yes",
     );
   } else {
     lines.push("# RADIUS IP could not be resolved at provisioning time -- will be configured by cloud command");
@@ -221,7 +222,7 @@ const lines: string[] = [
       safe("/interface pppoe-server server disable [find name=" + companySlug + "-pppoe]"),
       safe("/interface pppoe-server server remove [find name=" + companySlug + "-pppoe]"),
       safe("/ppp profile remove [find name=" + companySlug + "-pppoe]"),
-      '/ppp profile add name=' + companySlug + '-pppoe' + (hasRadius ? ' use-radius=yes' : '') + ' comment="SmartLinkNet"',
+      '/ppp profile add name=' + companySlug + '-pppoe comment="SmartLinkNet"',
       "/interface pppoe-server server add name=" + companySlug + "-pppoe interface=" + bridgeName + " default-profile=" + companySlug + "-pppoe disabled=no",
     );
   }
