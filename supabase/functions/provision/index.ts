@@ -5,6 +5,16 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const APP_URL = Deno.env.get("APP_URL") || "https://smart-link-kenya.vercel.app";
 
+// Resolve a hostname to its first IPv4 address using Deno's DNS
+async function resolveHostToIp(hostname: string): Promise<string | null> {
+  try {
+    const records = await Deno.resolveDns(hostname, "A");
+    return records?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 serve(async (req: Request) => {
   if (req.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
 
@@ -36,14 +46,46 @@ serve(async (req: Request) => {
   const { data: tenant } = await supabase
     .from("tenants").select("slug, name").eq("id", router.tenant_id).maybeSingle();
 
-  const { data: radiusServer } = await supabase
+  // --- RADIUS: auto-seed system RADIUS server for tenant if missing ---
+  const supabaseHost = new URL(SUPABASE_URL).host;
+  const radiusAuthUrl = "https://" + supabaseHost + "/functions/v1/radius-auth";
+  const radiusAcctUrl = "https://" + supabaseHost + "/functions/v1/radius-accounting";
+
+  // Resolve Supabase host to IP (RouterOS radius add address= requires IP)
+  const supabaseIp = await resolveHostToIp(supabaseHost);
+
+  let { data: radiusServer } = await supabase
     .from("radius_servers")
-    .select("host, auth_port, acct_port, shared_secret")
+    .select("id, host, auth_port, acct_port, shared_secret")
     .eq("tenant_id", router.tenant_id)
     .eq("is_active", true)
     .order("priority", { ascending: true })
     .limit(1)
     .maybeSingle();
+
+  // Auto-seed system RADIUS server if none exists for this tenant
+  if (!radiusServer && supabaseIp) {
+    const sharedSecret = Array.from(
+      crypto.getRandomValues(new Uint8Array(16))
+    ).map((b: number) => b.toString(16).padStart(2, "0")).join("");
+
+    const { data: seeded } = await supabase.from("radius_servers").insert({
+      tenant_id: router.tenant_id,
+      name: "SmartLinkNet Cloud RADIUS",
+      host: supabaseIp,
+      auth_port: 443,
+      acct_port: 443,
+      shared_secret: sharedSecret,
+      is_active: true,
+      is_primary: true,
+      is_healthy: true,
+      priority: 1,
+      auth_url: radiusAuthUrl,
+      acct_url: radiusAcctUrl,
+    }).select("id, host, auth_port, acct_port, shared_secret").single();
+
+    radiusServer = seeded;
+  }
 
   const ispSlug = tenant?.slug ?? router.tenant_id;
   const safeName = (router.name || "MikroTik").replace(/"/g, '\\"');
@@ -69,31 +111,33 @@ serve(async (req: Request) => {
   const hasHotspot = services.includes("hotspot");
   const hasPppoe = services.includes("pppoe");
 
-  const appHost = new URL(APP_URL).hostname;
-  const hasRealRadius = radiusServer?.host && radiusServer.host !== "pending" && /^\d+\.\d+\.\d+\.\d+$/.test(radiusServer.host);
-  const radiusHost = hasRealRadius ? radiusServer!.host : null;
+  // Validate RADIUS host is an IP (RouterOS requirement)
+  const radiusIp = radiusServer?.host && /^\d+\.\d+\.\d+\.\d+$/.test(radiusServer.host)
+    ? radiusServer.host
+    : supabaseIp;
   const radiusSecret = radiusServer?.shared_secret || "SmartLinkNet";
   const radiusAuthPort = radiusServer?.auth_port || 1812;
   const radiusAcctPort = radiusServer?.acct_port || 1813;
   const radiusService = hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp";
+  const hasRadius = !!radiusIp;
 
-const apiUsername = (router.api_username && router.api_username !== "admin") ? router.api_username : "sln-api";
+  const apiUsername = (router.api_username && router.api_username !== "admin") ? router.api_username : "sln-api";
   const apiPassword = router.api_password || Array.from(
     crypto.getRandomValues(new Uint8Array(16))
   ).map((b: number) => b.toString(16).padStart(2, "0")).join("");
 
   await supabase.from("routers").update({ api_username: apiUsername, api_password: apiPassword }).eq("id", router.id);
 
-  const supabaseHost = new URL(SUPABASE_URL).host;
   const callbackUrl = "https://" + supabaseHost + "/functions/v1/provision-callback?router_id=" + router.id + "&stage=complete";
   const pollUrl = "https://" + supabaseHost + "/functions/v1/router-poll?router_id=" + router.id + "&token=" + apiPassword;
   const heartbeatUrl = APP_URL + "/api/heartbeat?router=" + router.id;
 
   const safe = (cmd: string) => ":do { " + cmd + " } on-error={}";
 
-  // on-event strings: use single quotes around URLs so outer double-quotes are unambiguous to RouterOS
   const pollOnEvent = ":do { /tool fetch mode=https url='" + pollUrl + "' http-method=post http-data='{}' dst-path=sln-poll.json keep-result=yes } on-error={}";
   const heartbeatOnEvent = ":do { /tool fetch mode=https url='" + heartbeatUrl + "' keep-result=no } on-error={}";
+
+  const staticPortalUrl = APP_URL + "/portal?isp=" + ispSlug;
 
   const lines: string[] = [
     "# SmartLinkNet -- Auto-provisioning script",
@@ -136,27 +180,27 @@ const apiUsername = (router.api_username && router.api_username !== "admin") ? r
     "# 7. DNS",
     "/ip dns set allow-remote-requests=yes servers=8.8.8.8,8.8.4.4",
     "",
-    "# 8. RADIUS",
+    "# 8. RADIUS -- SmartLinkNet Cloud AAA",
     safe('/radius remove [find comment="SmartLinkNet"]'),
-    ...(radiusHost ? [
-      "/radius add service=" + radiusService + " address=" + radiusHost + " secret=" + radiusSecret + " authentication-port=" + radiusAuthPort + " accounting-port=" + radiusAcctPort + ' timeout=3000ms comment="SmartLinkNet"',
-      "/radius incoming set accept=yes port=3799",
-    ] : [
-      '# RADIUS: no server configured yet — add via SmartLinkNet dashboard',
-    ]),
   );
 
+  if (hasRadius) {
+    lines.push(
+      "/radius add service=" + radiusService + " address=" + radiusIp + " secret=" + radiusSecret + " authentication-port=" + radiusAuthPort + " accounting-port=" + radiusAcctPort + ' timeout=3000ms comment="SmartLinkNet"',
+      "/radius incoming set accept=yes port=3799",
+    );
+  } else {
+    lines.push("# RADIUS IP could not be resolved at provisioning time -- will be configured by cloud command");
+  }
+
   if (hasHotspot) {
-    // Build portal URL without $ variables — hotspot will append them via login-page parameter substitution
-    // RouterOS hotspot login-page does NOT support $() substitution in .rsc — set a static base URL instead
-    const staticPortalUrl = APP_URL + "/portal?isp=" + ispSlug;
     lines.push(
       "",
       "# 9. Hotspot",
       safe("/ip hotspot disable [find name=" + companySlug + "-hotspot]"),
       safe("/ip hotspot remove [find name=" + companySlug + "-hotspot]"),
       safe("/ip hotspot profile remove [find name=" + companySlug + "-hs-profile]"),
-      "/ip hotspot profile add name=" + companySlug + "-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d" + (radiusHost ? " use-radius=yes accounting=yes" : "") + " login-page=\"" + staticPortalUrl + "\"",
+      "/ip hotspot profile add name=" + companySlug + "-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d" + (hasRadius ? " use-radius=yes accounting=yes" : "") + ' login-page="' + staticPortalUrl + '"',
       "/ip hotspot add name=" + companySlug + "-hotspot interface=" + bridgeName + " address-pool=" + companySlug + "-pool profile=" + companySlug + "-hs-profile disabled=no",
       "",
       "# Walled Garden",
@@ -179,7 +223,7 @@ const apiUsername = (router.api_username && router.api_username !== "admin") ? r
       safe("/interface pppoe-server server disable [find name=" + companySlug + "-pppoe]"),
       safe("/interface pppoe-server server remove [find name=" + companySlug + "-pppoe]"),
       safe("/ppp profile remove [find name=" + companySlug + "-pppoe]"),
-      '/ppp profile add name=' + companySlug + '-pppoe' + (radiusHost ? ' use-radius=yes' : '') + ' comment="SmartLinkNet"',
+      '/ppp profile add name=' + companySlug + '-pppoe' + (hasRadius ? ' use-radius=yes' : '') + ' comment="SmartLinkNet"',
       "/interface pppoe-server server add name=" + companySlug + "-pppoe interface=" + bridgeName + " default-profile=" + companySlug + "-pppoe disabled=no",
     );
   }
