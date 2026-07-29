@@ -63,28 +63,31 @@ serve(async (req: Request) => {
   const supabaseHost = new URL(SUPABASE_URL).host;
   const supabaseIp = await resolveHostToIp(supabaseHost);
 
-  let { data: radiusServer } = await db
+  // Fetch primary + secondary RADIUS servers (FreeRADIUS VPS IPs)
+  const { data: radiusServers } = await db
     .from("radius_servers")
-    .select("id, host, auth_port, acct_port, shared_secret")
+    .select("id, host, freeradius_ip, freeradius_ip2, auth_port, acct_port, shared_secret, coa_port, interim_interval, priority")
     .eq("tenant_id", router.tenant_id)
     .eq("is_active", true)
     .order("priority", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .limit(2);
 
-  if (!radiusServer && supabaseIp) {
+  let radiusServer = radiusServers?.[0] ?? null;
+  const radiusServer2 = radiusServers?.[1] ?? null;
+
+  if (!radiusServer) {
     const secret = Array.from(crypto.getRandomValues(new Uint8Array(16)))
       .map((b: number) => b.toString(16).padStart(2, "0")).join("");
     const { data: seeded } = await db.from("radius_servers").insert({
       tenant_id: router.tenant_id,
-      name: "SmartLinkNet Cloud RADIUS",
-      host: supabaseIp,
-      auth_port: 1812, acct_port: 1813,
+      name: "SmartLinkNet FreeRADIUS",
+      host: supabaseIp || "pending",
+      freeradius_ip: null,   // ISP must set this after running setup.sh
+      auth_port: 1812, acct_port: 1813, coa_port: 3799,
       shared_secret: secret,
       is_active: true, is_primary: true, is_healthy: true, priority: 1,
-      auth_url: "https://" + supabaseHost + "/functions/v1/radius-auth",
-      acct_url: "https://" + supabaseHost + "/functions/v1/radius-accounting",
-    }).select("id, host, auth_port, acct_port, shared_secret").single();
+      interim_interval: 300,
+    }).select("id, host, freeradius_ip, freeradius_ip2, auth_port, acct_port, shared_secret, coa_port, interim_interval").single();
     radiusServer = seeded;
   }
 
@@ -109,11 +112,17 @@ serve(async (req: Request) => {
   const hasHotspot = services.includes("hotspot");
   const hasPppoe = services.includes("pppoe");
 
-  const radiusIp = radiusServer?.host && /^\d+\.\d+\.\d+\.\d+$/.test(radiusServer.host)
-    ? radiusServer.host : supabaseIp;
-  const radiusSecret = radiusServer?.shared_secret || "SmartLinkNet";
-  const radiusAuthPort = radiusServer?.auth_port || 1812;
-  const radiusAcctPort = radiusServer?.acct_port || 1813;
+  // Use freeradius_ip (actual VPS IP) if set, otherwise fall back to host
+  const radiusIp = radiusServer?.freeradius_ip ||
+    (radiusServer?.host && /^\d+\.\d+\.\d+\.\d+$/.test(radiusServer.host) ? radiusServer.host : null);
+  const radiusIp2 = radiusServer2?.freeradius_ip ||
+    radiusServer?.freeradius_ip2 ||
+    (radiusServer2?.host && /^\d+\.\d+\.\d+\.\d+$/.test(radiusServer2.host) ? radiusServer2.host : null);
+  const radiusSecret  = radiusServer?.shared_secret || "SmartLinkNet";
+  const radiusSecret2 = radiusServer2?.shared_secret || radiusSecret;
+  const radiusAuthPort  = radiusServer?.auth_port  || 1812;
+  const radiusAcctPort  = radiusServer?.acct_port  || 1813;
+  const interimInterval = radiusServer?.interim_interval || 300;
   const radiusService = hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp";
 
   const apiUsername = (router.api_username && router.api_username !== "admin") ? router.api_username : "sln-api";
@@ -255,7 +264,7 @@ serve(async (req: Request) => {
     ":do { /ip firewall nat get [find comment=\"SmartLinkNet NAT\"] chain } on-error={ :set slnErrors ($slnErrors . \"nat-missing,\") };",
   ];
   if (radiusIp) {
-    verifyLines.push(":do { /radius get [find comment=\"SmartLinkNet\"] address } on-error={ :set slnErrors ($slnErrors . \"radius-missing,\") };");
+    verifyLines.push(":do { /radius get [find comment=\"SmartLinkNet-Primary\"] address } on-error={ :set slnErrors ($slnErrors . \"radius-missing,\") };");
   }
   if (hasHotspot) {
     verifyLines.push(":do { /ip hotspot get [find name=" + ispSlug + "-hotspot] name } on-error={ :set slnErrors ($slnErrors . \"hotspot-missing,\") };");
@@ -354,14 +363,39 @@ serve(async (req: Request) => {
     cb("nat"),
     "",
     "# ── PHASE 11: RADIUS (dependency: internet) ─────────────────────────",
-    safe('/radius remove [find comment="SmartLinkNet"]'),
+    safe('/radius remove [find comment~"SmartLinkNet"]'),
   );
 
   if (radiusIp) {
+    // Primary FreeRADIUS
     lines.push(
-      retry("/radius add service=" + radiusService + " address=" + radiusIp + " secret=" + radiusSecret + " authentication-port=" + radiusAuthPort + " accounting-port=" + radiusAcctPort + ' timeout=3000ms comment="SmartLinkNet"'),
+      retry("/radius add service=" + radiusService +
+        " address=" + radiusIp +
+        " secret=" + radiusSecret +
+        " authentication-port=" + radiusAuthPort +
+        " accounting-port=" + radiusAcctPort +
+        " timeout=3000ms" +
+        " accounting-backup=no" +
+        ' comment="SmartLinkNet-Primary"'),
+    );
+    // Secondary FreeRADIUS — automatic failover
+    if (radiusIp2) {
+      lines.push(
+        retry("/radius add service=" + radiusService +
+          " address=" + radiusIp2 +
+          " secret=" + radiusSecret2 +
+          " authentication-port=" + radiusAuthPort +
+          " accounting-port=" + radiusAcctPort +
+          " timeout=3000ms" +
+          " accounting-backup=yes" +
+          ' comment="SmartLinkNet-Secondary"'),
+      );
+    }
+    lines.push(
+      // Accept CoA/Disconnect-Request from FreeRADIUS on UDP 3799
       "/radius incoming set accept=yes port=3799",
-      "/ppp aaa set use-radius=yes accounting=yes",
+      // PPP AAA: RADIUS auth + accounting + interim updates
+      "/ppp aaa set use-radius=yes accounting=yes interim-update=" + interimInterval + "s",
       cb("radius"),
     );
   }

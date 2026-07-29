@@ -1,0 +1,160 @@
+##############################################################
+# SmartLinkNet FreeRADIUS — sites-enabled/default
+# Handles Hotspot + PPPoE auth, accounting, CoA, Disconnect
+##############################################################
+
+server default {
+
+  # ── Authentication (UDP 1812) ─────────────────────────────
+  listen {
+    type      = auth
+    ipaddr    = *
+    port      = 1812
+    limit {
+      max_connections = 256
+      lifetime        = 0
+      idle_timeout    = 30
+    }
+  }
+
+  # ── Accounting (UDP 1813) ─────────────────────────────────
+  listen {
+    type      = acct
+    ipaddr    = *
+    port      = 1813
+    limit {
+      max_connections = 256
+      lifetime        = 0
+      idle_timeout    = 30
+    }
+  }
+
+  # ── CoA / Disconnect (UDP 3799) ───────────────────────────
+  listen {
+    type      = coa
+    ipaddr    = *
+    port      = 3799
+  }
+
+  # ── Authorization ─────────────────────────────────────────
+  authorize {
+    filter_username
+    preprocess
+
+    # Reject if no username
+    if (!&User-Name) {
+      reject
+    }
+
+    # SQL lookup: check radcheck, load radreply, load radusergroup
+    sql
+
+    # If no Auth-Type set by SQL, use local password check
+    if (!control:Auth-Type) {
+      if (&User-Password) {
+        update control {
+          Auth-Type := "PAP"
+        }
+      }
+    }
+
+    expiration
+    logintime
+    pap
+  }
+
+  # ── Authentication ────────────────────────────────────────
+  authenticate {
+    Auth-Type PAP {
+      pap
+    }
+    Auth-Type CHAP {
+      chap
+    }
+    Auth-Type MS-CHAP {
+      mschap
+    }
+  }
+
+  # ── Pre-accounting ────────────────────────────────────────
+  preacct {
+    preprocess
+    acct_unique
+    suffix
+    files
+  }
+
+  # ── Accounting ────────────────────────────────────────────
+  accounting {
+    detail
+    sql
+    exec
+    attr_filter.accounting_response
+  }
+
+  # ── Session (simultaneous-use check) ─────────────────────
+  session {
+    sql
+  }
+
+  # ── Post-auth ─────────────────────────────────────────────
+  post-auth {
+    # Log all auth attempts (accept + reject) to radpostauth
+    sql
+
+    # Mark voucher as used on first successful auth
+    if (&reply:Packet-Type == "Access-Accept") {
+      update request {
+        &Tmp-String-0 := "%{User-Name}"
+      }
+      exec {
+        wait   = no
+        input_pairs = request
+      }
+    }
+
+    Post-Auth-Type REJECT {
+      sql
+      attr_filter.access_reject
+    }
+  }
+
+  # ── CoA / Disconnect handling ─────────────────────────────
+  recv-coa {
+    sql
+  }
+
+  send-coa {
+    sql
+  }
+}
+
+##############################################################
+# Inner tunnel server for EAP (optional, for WPA Enterprise)
+##############################################################
+server inner-tunnel {
+  listen {
+    ipaddr    = 127.0.0.1
+    port      = 18120
+    type      = auth
+  }
+
+  authorize {
+    filter_username
+    sql
+    pap
+  }
+
+  authenticate {
+    Auth-Type PAP { pap }
+    Auth-Type CHAP { chap }
+    Auth-Type MS-CHAP { mschap }
+  }
+
+  post-auth {
+    sql
+    Post-Auth-Type REJECT {
+      attr_filter.access_reject
+    }
+  }
+}
