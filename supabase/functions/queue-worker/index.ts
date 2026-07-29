@@ -576,6 +576,43 @@ async function executeJob(sb: any, job: any): Promise<void> {
       break;
     }
 
+    // ── CoA / Disconnect ────────────────────────────────────────────────────
+    // Queued by fn_trigger_coa_on_subscription when a subscription is
+    // suspended, expired, cancelled, reactivated, or has its package changed.
+    // Calls coa-send which forwards the CoA/DM to FreeRADIUS → MikroTik.
+    case "coa_action": {
+      const { action, username, new_rate_limit } = payload as {
+        action: "disconnect" | "coa";
+        username: string;
+        new_rate_limit?: string;
+        reason?: string;
+      };
+      if (!action || !username) return;
+
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+      const svcKey      = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+
+      const res = await fetch(
+        supabaseUrl.replace(/\/+$/, "") + "/functions/v1/coa-send",
+        {
+          method:  "POST",
+          headers: {
+            "content-type":  "application/json",
+            "authorization": "Bearer " + svcKey,
+          },
+          body: JSON.stringify({ action, username, tenant_id, new_rate_limit }),
+          signal: AbortSignal.timeout(15_000),
+        }
+      );
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        // Throw so queue-worker retries with backoff
+        throw new Error(`coa_action ${action} failed for ${username}: HTTP ${res.status} ${txt.slice(0, 200)}`);
+      }
+      break;
+    }
+
     default:
       // Unknown type — complete silently (don't DLQ on unknown types)
       break;

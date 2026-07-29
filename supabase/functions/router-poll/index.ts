@@ -200,6 +200,31 @@ serve(async (req: Request) => {
     return new Response(provisionUrl, { status: 200, headers: { "content-type": "text/plain" } });
   }
 
+  if (cmd.command === "patch_radius") {
+    const primaryIp = (cmd.payload as any)?.primary_ip || "";
+    const secondaryIp = (cmd.payload as any)?.secondary_ip || "";
+    if (!primaryIp) {
+      await db.from("router_commands").update({ status: "done", completed_at: now }).eq("id", cmd.id);
+      return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
+    }
+    const patchLines = [
+      ":do { /radius set [find comment=\"SmartLinkNet-Primary\"] address=" + primaryIp + " } on-error={};",
+      secondaryIp
+        ? ":do { /radius set [find comment=\"SmartLinkNet-Secondary\"] address=" + secondaryIp + " } on-error={};" 
+        : "",
+      ":log info \"SmartLinkNet: RADIUS address patched to " + primaryIp + "\"",
+    ].filter(Boolean).join("\n");
+    await db.from("router_commands").update({ status: "done", completed_at: now }).eq("id", cmd.id);
+    await db.from("provision_logs").insert({
+      router_id: routerId,
+      tenant_id: router.tenant_id,
+      stage: "patch_radius",
+      message: `RADIUS address patched to ${primaryIp}${secondaryIp ? " / " + secondaryIp : ""}`,
+      success: true,
+    });
+    return new Response(patchLines, { status: 200, headers: { "content-type": "text/plain" } });
+  }
+
   await db.from("router_commands").update({ status: "done", completed_at: now }).eq("id", cmd.id);
   return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
 });

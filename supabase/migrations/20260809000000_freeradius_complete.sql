@@ -290,7 +290,9 @@ CREATE OR REPLACE VIEW public.radusergroup AS
     AND (s.expires_at IS NULL OR s.expires_at > now());
 
 -- nas: NAS device registry — FreeRADIUS validates RADIUS clients from here
--- server = NULL means use the default virtual server
+-- Two rows per device: one keyed on nas_ip (used when router sends NAS-IP-Address),
+-- one keyed on nas_identifier (fallback when nas_ip is not yet discovered).
+-- server = NULL means use the default virtual server.
 CREATE OR REPLACE VIEW public.nas AS
   SELECT
     nd.id::text                            AS id,
@@ -304,7 +306,27 @@ CREATE OR REPLACE VIEW public.nas AS
     nd.tenant_id::text                     AS description
   FROM public.nas_devices nd
   WHERE nd.is_active = true
-    AND nd.shared_secret IS NOT NULL;
+    AND nd.shared_secret IS NOT NULL
+
+  UNION ALL
+
+  -- Fallback row keyed on nas_identifier so FreeRADIUS can match the client
+  -- by router name when nas_ip is not yet populated (e.g. before first poll).
+  SELECT
+    (nd.id::text || '-name')               AS id,
+    nd.nas_identifier                      AS nasname,
+    nd.nas_identifier                      AS shortname,
+    'other'                                AS type,
+    1812                                   AS ports,
+    nd.shared_secret                       AS secret,
+    NULL::text                             AS server,
+    nd.name                                AS community,
+    nd.tenant_id::text                     AS description
+  FROM public.nas_devices nd
+  WHERE nd.is_active = true
+    AND nd.shared_secret IS NOT NULL
+    AND nd.nas_ip IS NOT NULL
+    AND nd.nas_ip <> nd.nas_identifier;
 
 -- ── 4. Indexes ────────────────────────────────────────────────────────────
 

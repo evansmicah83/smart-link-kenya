@@ -122,7 +122,7 @@ function AaaPage() {
     queryFn: async () => {
       let q = (supabase as any)
         .from("auth_events")
-        .select("id, username, event_type, framed_ip, nas_identifier, received_at, nas_id")
+        .select("id, username, event_type, nas_identifier, received_at, nas_id, sessions(ip_address)")
         .eq("tenant_id", tenantId!)
         .order("received_at", { ascending: false })
         .limit(100);
@@ -130,7 +130,7 @@ function AaaPage() {
       if (accountingType !== "all") q = q.eq("event_type", accountingType);
       const { data, error } = await q;
       if (error) throw new Error(error.message);
-      return data ?? [];
+      return (data ?? []).map((r: any) => ({ ...r, framed_ip: r.sessions?.[0]?.ip_address ?? null }));
     },
     enabled: !!tenantId,
     retry: false,

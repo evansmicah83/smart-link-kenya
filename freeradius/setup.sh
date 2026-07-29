@@ -396,6 +396,22 @@ if [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
   if [ "${HTTP_STATUS}" = "200" ] || [ "${HTTP_STATUS}" = "201" ]; then
     info "✓ platform_settings.freeradius.primary_ip = ${PUBLIC_IP}"
     info "✓ All future ISP router provisioning will use this FreeRADIUS server"
+
+    # Queue patch_radius for every provisioned router so existing routers
+    # get the real IP without a full reprovision.
+    info "Queuing patch_radius commands for all provisioned routers..."
+    EXPIRES=$(date -u -d '+24 hours' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v+24H '+%Y-%m-%dT%H:%M:%SZ')
+    PATCH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+      "${SUPABASE_URL}/rest/v1/rpc/queue_patch_radius_all" \
+      -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+      -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+      -H "Content-Type: application/json" \
+      -d "{\"primary_ip\": \"${PUBLIC_IP}\", \"expires_at\": \"${EXPIRES}\"}")
+    if [ "${PATCH_STATUS}" = "200" ] || [ "${PATCH_STATUS}" = "204" ]; then
+      info "✓ patch_radius queued for all active routers"
+    else
+      warn "patch_radius queue returned HTTP ${PATCH_STATUS} — routers will get real IP on next reprovision"
+    fi
   else
     warn "platform_settings update returned HTTP ${HTTP_STATUS}"
     warn "Manually run: UPDATE platform_settings SET value = value || '{\"primary_ip\":\"${PUBLIC_IP}\",\"deployed\":true}' WHERE key = 'freeradius';"

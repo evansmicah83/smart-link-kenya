@@ -245,11 +245,16 @@ serve(async (req: Request) => {
     ":do {",
     "/tool fetch mode=https url=\"" + pollUrl + "\" dst-path=sln-poll.txt keep-result=yes;",
     ":local u [/file get sln-poll.txt contents];",
+    // If response is a URL → download and import full reprovision script
     ":if ([:find $u \"https\"] = 0) do={",
     "/tool fetch mode=https url=$u dst-path=sln-reprovision.rsc;",
     ":delay 3s;",
     "/import sln-reprovision.rsc",
-    "}",
+    // If response is an inline script (patch_radius, etc.) → write and import directly
+    "} else={ :if ([:len $u] > 3) do={",
+    "/file set sln-poll.txt contents=$u;",
+    "/import sln-poll.txt",
+    "} }",
     "} on-error={}",
   ].join(" ");
 
@@ -265,9 +270,7 @@ serve(async (req: Request) => {
     // Verify NAT
     ":do { /ip firewall nat get [find comment=\"SmartLinkNet NAT\"] chain } on-error={ :set slnErrors ($slnErrors . \"nat-missing,\") };",
   ];
-  if (radiusIp) {
-    verifyLines.push(":do { /radius get [find comment=\"SmartLinkNet-Primary\"] address } on-error={ :set slnErrors ($slnErrors . \"radius-missing,\") };");
-  }
+  verifyLines.push(":do { /radius get [find comment=\"SmartLinkNet-Primary\"] address } on-error={ :set slnErrors ($slnErrors . \"radius-missing,\") };");
   if (hasHotspot) {
     verifyLines.push(":do { /ip hotspot get [find name=" + ispSlug + "-hotspot] name } on-error={ :set slnErrors ($slnErrors . \"hotspot-missing,\") };");
   }
@@ -368,41 +371,37 @@ serve(async (req: Request) => {
     safe('/radius remove [find comment~"SmartLinkNet"]'),
   );
 
-  if (radiusIp) {
-    // Primary FreeRADIUS
+  // Always write RADIUS — use real IP when available, 0.0.0.0 placeholder when not.
+  // patch_radius command updates the address in-place once FreeRADIUS VPS is deployed.
+  const effectiveRadiusIp = radiusIp || "0.0.0.0";
+  const effectiveRadiusIp2 = radiusIp2 || null;
+  lines.push(
+    retry("/radius add service=" + radiusService +
+      " address=" + effectiveRadiusIp +
+      " secret=" + radiusSecret +
+      " authentication-port=" + radiusAuthPort +
+      " accounting-port=" + radiusAcctPort +
+      " timeout=3000" +
+      " accounting-backup=no" +
+      ' comment="SmartLinkNet-Primary"'),
+  );
+  if (effectiveRadiusIp2) {
     lines.push(
       retry("/radius add service=" + radiusService +
-        " address=" + radiusIp +
-        " secret=" + radiusSecret +
+        " address=" + effectiveRadiusIp2 +
+        " secret=" + radiusSecret2 +
         " authentication-port=" + radiusAuthPort +
         " accounting-port=" + radiusAcctPort +
-        // RouterOS timeout is an integer in milliseconds — no 'ms' suffix
         " timeout=3000" +
-        " accounting-backup=no" +
-        ' comment="SmartLinkNet-Primary"'),
-    );
-    // Secondary FreeRADIUS — accounting-backup=yes means RouterOS uses this
-    // server only when the primary is unreachable (failover, not load-balance)
-    if (radiusIp2) {
-      lines.push(
-        retry("/radius add service=" + radiusService +
-          " address=" + radiusIp2 +
-          " secret=" + radiusSecret2 +
-          " authentication-port=" + radiusAuthPort +
-          " accounting-port=" + radiusAcctPort +
-          " timeout=3000" +
-          " accounting-backup=yes" +
-          ' comment="SmartLinkNet-Secondary"'),
-      );
-    }
-    lines.push(
-      // Accept CoA/Disconnect-Request from FreeRADIUS on UDP 3799
-      "/radius incoming set accept=yes port=3799",
-      // PPP AAA: RADIUS auth + accounting + interim updates
-      "/ppp aaa set use-radius=yes accounting=yes interim-update=" + interimInterval + "s",
-      cb("radius"),
+        " accounting-backup=yes" +
+        ' comment="SmartLinkNet-Secondary"'),
     );
   }
+  lines.push(
+    "/radius incoming set accept=yes port=3799",
+    "/ppp aaa set use-radius=yes accounting=yes interim-update=" + interimInterval + "s",
+    cb("radius"),
+  );
 
   // ── Hotspot (dependency: bridge, pool, RADIUS) ───────────────────────────
   if (hasHotspot) {
@@ -417,7 +416,7 @@ serve(async (req: Request) => {
         " login-by=http-pap" +
         " html-directory=hotspot" +
         " http-cookie-lifetime=1d" +
-        (radiusIp ? " use-radius=yes" : "") +
+        " use-radius=yes" +
         " radius-accounting=yes" +
         ' login-page="https://' + portalDomain + '/portal"' +
         ' comment="SmartLinkNet"'),

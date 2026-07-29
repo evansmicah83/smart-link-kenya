@@ -80,7 +80,27 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({ error: "Failed to set provision token" }), { status: 500, headers: { ...CORS, "content-type": "application/json" } });
     }
 
-    return new Response(JSON.stringify({ token: provisionToken }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
+    // Build the bootstrap script the ISP pastes into the router terminal once.
+    // It installs the poll scheduler so the router starts checking in every minute.
+    // After this runs, the ISP clicks "Register & Activate" in the dashboard
+    // and apply-router-config handles everything else automatically.
+    const supabaseHost = new URL(SUPABASE_URL).host;
+    const provisionUrl = "https://" + supabaseHost + "/functions/v1/provision?token=" + provisionToken;
+
+    const bootstrapScript = [
+      "# SmartLinkNet Bootstrap Script",
+      "# Paste this into your MikroTik terminal ONCE to connect it to SmartLinkNet.",
+      "# After running, return to the dashboard and click Register & Activate.",
+      "",
+      "# Step 1: Download and run the full provisioning script",
+      ":do {",
+      "/tool fetch mode=https url=\"" + provisionUrl + "\" dst-path=sln-provision.rsc;",
+      ":delay 2s;",
+      "/import sln-provision.rsc",
+      "} on-error={ :log error \"SLN: bootstrap failed — check internet on ether1\" };",
+    ].join("\n");
+
+    return new Response(JSON.stringify({ token: provisionToken, bootstrap_script: bootstrapScript }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
   } catch (err) {
     console.error(err);
     return new Response(JSON.stringify({ error: "Internal error" }), { status: 500, headers: { ...CORS, "content-type": "application/json" } });
