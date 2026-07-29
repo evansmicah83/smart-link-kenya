@@ -33,7 +33,7 @@ serve(async (req: Request) => {
     api_connected: true,
   }).eq("id", routerId);
 
-  // Check for pending re_provision command
+  // Check for pending command
   const { data: commands } = await db
     .from("router_commands")
     .select("id, command, payload")
@@ -50,31 +50,33 @@ serve(async (req: Request) => {
   }
 
   const cmd = commands[0];
-
-  // Mark running
   await db.from("router_commands").update({ status: "running", started_at: now }).eq("id", cmd.id);
 
   if (cmd.command === "re_provision") {
     const provisionUrl = (cmd.payload as any)?.provision_url || "";
 
-    // Mark done — router will handle it via the re_provision_url response
+    // Mark done immediately
     await db.from("router_commands").update({ status: "done", completed_at: now }).eq("id", cmd.id);
 
     await db.from("provision_logs").insert({
       router_id: routerId,
       tenant_id: router.tenant_id,
-      stage: "re_provision",
-      message: "Re-provisioning triggered — router fetching full config",
+      stage: "router_applying",
+      message: "Router received config — fetching and applying full provisioning script now",
       success: true,
     });
 
-    // Return the provision URL — the router-poll on-event script handles fetching it
-    return new Response(JSON.stringify({ ok: true, command: "re_provision", provision_url: provisionUrl }), {
+    // Return provision_url — the RouterOS on-event script fetches and imports it
+    return new Response(JSON.stringify({
+      ok: true,
+      command: "re_provision",
+      provision_url: provisionUrl,
+    }), {
       status: 200, headers: { "content-type": "application/json" },
     });
   }
 
-  // Unknown command
+  // Unknown command — mark done
   await db.from("router_commands").update({ status: "done", completed_at: now }).eq("id", cmd.id);
   return new Response(JSON.stringify({ ok: true, command: cmd.command }), {
     status: 200, headers: { "content-type": "application/json" },

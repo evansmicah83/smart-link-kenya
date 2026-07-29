@@ -5,8 +5,6 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const APP_URL = Deno.env.get("APP_URL") || "https://smart-link-kenya.vercel.app";
 
-// Resolve hostname to IPv4 dynamically via DNS-over-HTTPS.
-// Tries multiple providers so this works regardless of where the system is hosted.
 async function resolveHostToIp(hostname: string): Promise<string | null> {
   const providers = [
     "https://cloudflare-dns.com/dns-query?name=" + hostname + "&type=A",
@@ -55,12 +53,7 @@ serve(async (req: Request) => {
   const { data: tenant } = await supabase
     .from("tenants").select("slug, name").eq("id", router.tenant_id).maybeSingle();
 
-  // --- RADIUS: auto-seed system RADIUS server for tenant if missing ---
   const supabaseHost = new URL(SUPABASE_URL).host;
-  const radiusAuthUrl = "https://" + supabaseHost + "/functions/v1/radius-auth";
-  const radiusAcctUrl = "https://" + supabaseHost + "/functions/v1/radius-accounting";
-
-  // Resolve Supabase host to IP (RouterOS radius add address= requires IP)
   const supabaseIp = await resolveHostToIp(supabaseHost);
 
   let { data: radiusServer } = await supabase
@@ -72,7 +65,6 @@ serve(async (req: Request) => {
     .limit(1)
     .maybeSingle();
 
-  // Auto-seed system RADIUS server if none exists for this tenant
   if (!radiusServer && supabaseIp) {
     const sharedSecret = Array.from(
       crypto.getRandomValues(new Uint8Array(16))
@@ -82,15 +74,15 @@ serve(async (req: Request) => {
       tenant_id: router.tenant_id,
       name: "SmartLinkNet Cloud RADIUS",
       host: supabaseIp,
-      auth_port: 443,
-      acct_port: 443,
+      auth_port: 1812,
+      acct_port: 1813,
       shared_secret: sharedSecret,
       is_active: true,
       is_primary: true,
       is_healthy: true,
       priority: 1,
-      auth_url: radiusAuthUrl,
-      acct_url: radiusAcctUrl,
+      auth_url: "https://" + supabaseHost + "/functions/v1/radius-auth",
+      acct_url: "https://" + supabaseHost + "/functions/v1/radius-accounting",
     }).select("id, host, auth_port, acct_port, shared_secret").single();
 
     radiusServer = seeded;
@@ -120,7 +112,6 @@ serve(async (req: Request) => {
   const hasHotspot = services.includes("hotspot");
   const hasPppoe = services.includes("pppoe");
 
-  // Validate RADIUS host is an IP (RouterOS requirement)
   const radiusIp = radiusServer?.host && /^\d+\.\d+\.\d+\.\d+$/.test(radiusServer.host)
     ? radiusServer.host
     : supabaseIp;
@@ -139,20 +130,28 @@ serve(async (req: Request) => {
 
   const callbackUrl = "https://" + supabaseHost + "/functions/v1/provision-callback?router_id=" + router.id + "&stage=complete";
   const pollUrl = "https://" + supabaseHost + "/functions/v1/router-poll?router_id=" + router.id + "&token=" + apiPassword;
-  const heartbeatUrl = APP_URL + "/api/heartbeat?router=" + router.id;
 
   const safe = (cmd: string) => ":do { " + cmd + " } on-error={}";
 
-  // Poll on-event: POST to router-poll, get JSON back, if re_provision command present re-fetch full script
-  // RouterOS: fetch response to file, read it, check for re_provision keyword, fetch provision URL if found
-  const pollOnEvent = ":do { /tool fetch mode=https url='" + pollUrl + "' http-method=post http-data='{}' dst-path=sln-poll.json keep-result=yes } on-error={}";
+  // Poll on-event: fetch JSON from router-poll, check if re_provision command returned,
+  // if yes extract provision_url from JSON and fetch+import the full script immediately
+  const pollOnEvent = [
+    ":do {",
+    "/tool fetch mode=https url='" + pollUrl + "' http-method=post http-data='{}' dst-path=sln-poll.json keep-result=yes;",
+    ":local d [/file get sln-poll.json contents];",
+    ":if ([:find $d \"re_provision\"] >= 0) do={",
+    "  :local s [:find $d \"provision_url\\\":\\\"\" 0];",
+    "  :local s2 ($s + 17);",
+    "  :local e [:find $d \"\\\"\" $s2];",
+    "  :local u [:pick $d $s2 $e];",
+    "  /tool fetch mode=https url=$u dst-path=sln-reprovision.rsc;",
+    "  :delay 3s;",
+    "  /import sln-reprovision.rsc",
+    "}",
+    "} on-error={}",
+  ].join(" ");
 
-  // Separate re-provision check script — runs after poll, reads sln-poll.json and re-provisions if needed
-  // This is added as a one-time scheduler by apply-router-config via the re_provision command
-  // The poll scheduler itself stays simple — just heartbeat + file fetch
-  const heartbeatOnEvent = ":do { /tool fetch mode=https url='" + heartbeatUrl + "' keep-result=no } on-error={}";
-
-const lines: string[] = [
+  const lines: string[] = [
     "# SmartLinkNet -- Auto-provisioning script",
     "# Router: " + safeName + " | Tenant: " + (tenant?.name ?? ispSlug),
     "# Generated: " + new Date().toISOString(),
@@ -193,7 +192,7 @@ const lines: string[] = [
     "# 7. DNS",
     "/ip dns set allow-remote-requests=yes servers=8.8.8.8,8.8.4.4",
     "",
-    "# 8. RADIUS -- SmartLinkNet Cloud AAA",
+    "# 8. RADIUS",
     safe('/radius remove [find comment="SmartLinkNet"]'),
   );
 
@@ -204,7 +203,7 @@ const lines: string[] = [
       "/ppp aaa set use-radius=yes",
     );
   } else {
-    lines.push("# RADIUS IP could not be resolved at provisioning time -- will be configured by cloud command");
+    lines.push("# RADIUS IP could not be resolved -- will be configured on next poll");
   }
 
   if (hasHotspot) {
@@ -250,15 +249,11 @@ const lines: string[] = [
     safe('/user remove [find name="' + apiUsername + '"]'),
     '/user add name="' + apiUsername + '" password="' + apiPassword + '" group=full comment="SmartLinkNet"',
     "",
-    "# 12. Poll scheduler -- NAT-safe pull model",
+    "# 12. Poll scheduler -- calls home every 1 min, auto-applies re_provision if queued",
     safe("/system scheduler remove [find name=sln-poll]"),
     '/system scheduler add name=sln-poll interval=1m start-time=startup on-event="' + pollOnEvent + '" comment="SmartLinkNet"',
     "",
-    "# 13. Heartbeat scheduler",
-    safe("/system scheduler remove [find name=sln-heartbeat]"),
-    '/system scheduler add name=sln-heartbeat interval=5m start-time=startup on-event="' + heartbeatOnEvent + '" comment="SmartLinkNet"',
-    "",
-    "# 14. Report provisioning complete",
+    "# 13. Report provisioning complete",
     safe('/tool fetch mode=https url="' + callbackUrl + '" keep-result=no'),
     ':log info "SmartLinkNet: provisioning complete for ' + safeName + '"',
   );
