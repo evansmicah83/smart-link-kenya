@@ -133,17 +133,14 @@ serve(async (req: Request) => {
 
   const safe = (cmd: string) => ":do { " + cmd + " } on-error={}";
 
-  // Poll on-event: fetch JSON from router-poll, check if re_provision command returned,
-  // if yes extract provision_url from JSON and fetch+import the full script immediately
+  // Poll on-event: fetch plain text from router-poll.
+  // If response is a URL (starts with https), fetch it as a script and import it.
+  // No JSON parsing needed — router-poll returns bare URL or "ok".
   const pollOnEvent = [
     ":do {",
-    "/tool fetch mode=https url='" + pollUrl + "' http-method=post http-data='{}' dst-path=sln-poll.json keep-result=yes;",
-    ":local d [/file get sln-poll.json contents];",
-    ":if ([:find $d \"re_provision\"] >= 0) do={",
-    "  :local s [:find $d \"provision_url\\\":\\\"\" 0];",
-    "  :local s2 ($s + 17);",
-    "  :local e [:find $d \"\\\"\" $s2];",
-    "  :local u [:pick $d $s2 $e];",
+    "/tool fetch mode=https url='" + pollUrl + "' dst-path=sln-poll.txt keep-result=yes;",
+    ":local u [/file get sln-poll.txt contents];",
+    ":if ([:find $u \"https://\"] = 0) do={",
     "  /tool fetch mode=https url=$u dst-path=sln-reprovision.rsc;",
     "  :delay 3s;",
     "  /import sln-reprovision.rsc",

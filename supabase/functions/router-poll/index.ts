@@ -25,7 +25,6 @@ serve(async (req: Request) => {
 
   const now = new Date().toISOString();
 
-  // Update heartbeat — router is alive and polling
   await db.from("routers").update({
     status: "online",
     last_seen: now,
@@ -33,7 +32,7 @@ serve(async (req: Request) => {
     api_connected: true,
   }).eq("id", routerId);
 
-  // Check for pending command
+  // Check for pending re_provision command
   const { data: commands } = await db
     .from("router_commands")
     .select("id, command, payload")
@@ -44,9 +43,8 @@ serve(async (req: Request) => {
     .limit(1);
 
   if (!commands?.length) {
-    return new Response(JSON.stringify({ ok: true, command: null }), {
-      status: 200, headers: { "content-type": "application/json" },
-    });
+    // No command — return plain "ok" so router poll on-event does nothing extra
+    return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
   }
 
   const cmd = commands[0];
@@ -55,30 +53,23 @@ serve(async (req: Request) => {
   if (cmd.command === "re_provision") {
     const provisionUrl = (cmd.payload as any)?.provision_url || "";
 
-    // Mark done immediately
     await db.from("router_commands").update({ status: "done", completed_at: now }).eq("id", cmd.id);
 
     await db.from("provision_logs").insert({
       router_id: routerId,
       tenant_id: router.tenant_id,
       stage: "router_applying",
-      message: "Router received config — fetching and applying full provisioning script now",
+      message: "Router received config command — fetching and applying full script now",
       success: true,
     });
 
-    // Return provision_url — the RouterOS on-event script fetches and imports it
-    return new Response(JSON.stringify({
-      ok: true,
-      command: "re_provision",
-      provision_url: provisionUrl,
-    }), {
-      status: 200, headers: { "content-type": "application/json" },
+    // Return JUST the URL as plain text — router reads it directly, no JSON parsing needed
+    return new Response(provisionUrl, {
+      status: 200,
+      headers: { "content-type": "text/plain" },
     });
   }
 
-  // Unknown command — mark done
   await db.from("router_commands").update({ status: "done", completed_at: now }).eq("id", cmd.id);
-  return new Response(JSON.stringify({ ok: true, command: cmd.command }), {
-    status: 200, headers: { "content-type": "application/json" },
-  });
+  return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
 });
