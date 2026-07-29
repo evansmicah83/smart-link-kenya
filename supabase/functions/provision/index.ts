@@ -10,38 +10,35 @@ serve(async (req: Request) => {
 
   const url = new URL(req.url);
   const token = url.searchParams.get("token") || "";
-  if (!token) return new Response(':log warning "SmartlinkNet: no token"', { status: 400, headers: { "content-type": "text/plain" } });
+  if (!token) return new Response(':log warning "SmartLinkNet: no token"', { status: 400, headers: { "content-type": "text/plain" } });
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { global: { fetch } });
 
   const { data: router, error } = await supabase
     .from("routers")
-    .select("id, name, tenant_id, bridge_port, bridge_ports, services, mode, subnet, provision_token_expires_at, api_username, api_password")
+    .select("id, name, tenant_id, bridge_port, bridge_ports, uplink_interface, services, mode, subnet, provision_token_expires_at, api_username, api_password")
     .eq("provision_token", token)
     .maybeSingle();
 
   if (error || !router) {
-    return new Response(':log warning "SmartlinkNet: token not found"', { status: 410, headers: { "content-type": "text/plain" } });
+    return new Response(':log warning "SmartLinkNet: token not found"', { status: 410, headers: { "content-type": "text/plain" } });
   }
 
-  // Auto-extend if expired
+  // Auto-extend token if expired
   const expires = router.provision_token_expires_at ? new Date(router.provision_token_expires_at) : null;
   if (expires && expires < new Date()) {
     await supabase.from("routers").update({
-      provision_token_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+      provision_token_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     }).eq("id", router.id);
   }
 
   await supabase.from("routers").update({ status: "provisioning" }).eq("id", router.id);
 
-  // Get tenant slug for portal URL
+  // Tenant info
   const { data: tenant } = await supabase
-    .from("tenants")
-    .select("slug, name")
-    .eq("id", router.tenant_id)
-    .maybeSingle();
+    .from("tenants").select("slug, name").eq("id", router.tenant_id).maybeSingle();
 
-  // Get real RADIUS server for this tenant
+  // RADIUS server
   const { data: radiusServer } = await supabase
     .from("radius_servers")
     .select("host, auth_port, acct_port, shared_secret")
@@ -69,54 +66,60 @@ serve(async (req: Request) => {
     ? router.bridge_ports
     : [router.bridge_port || "ether2"];
 
+  // Explicit uplink from wizard step 3, or fall back to ether1
+  const uplinkInterface: string = router.uplink_interface || "ether1";
+
   const services: string[] = router.services || [];
   const hasHotspot = services.includes("hotspot");
   const hasPppoe = services.includes("pppoe");
 
-  // Always resolve a RADIUS host: prefer DB record, fall back to APP_URL hostname
-  // so RADIUS is never silently skipped on first provision.
   const appHost = new URL(APP_URL).hostname;
   const radiusHost = (radiusServer?.host && radiusServer.host !== "pending") ? radiusServer.host : appHost;
   const radiusSecret = radiusServer?.shared_secret || "SmartLinkNet-Public-Fallback";
   const radiusAuthPort = radiusServer?.auth_port || 1812;
   const radiusAcctPort = radiusServer?.acct_port || 1813;
+  const radiusService = hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp";
 
-  const portalLoginPage = `${APP_URL}/portal?isp=${ispSlug}&mac=\$(mac)&ip=\$(ip)&url=\$(link-orig)&dst=\$(dst-ip)`;
+  const portalLoginPage = `${APP_URL}/portal?isp=${ispSlug}&mac=\\$(mac)&ip=\\$(ip)&url=\\$(link-orig)&dst=\\$(dst-ip)`;
 
-  // Generate or reuse API credentials so the platform can connect back to the router
+  // Generate or reuse API credentials
   const apiUsername = (router.api_username && router.api_username !== "admin") ? router.api_username : "sln-api";
-  const apiPassword = router.api_password || Array.from(crypto.getRandomValues(new Uint8Array(12))).map((b: number) => b.toString(16).padStart(2, "0")).join("");
-  // Persist credentials before script runs so they're available immediately
+  const apiPassword = router.api_password || Array.from(
+    crypto.getRandomValues(new Uint8Array(16))
+  ).map((b: number) => b.toString(16).padStart(2, "0")).join("");
+
+  // Persist credentials before script runs
   await supabase.from("routers").update({ api_username: apiUsername, api_password: apiPassword }).eq("id", router.id);
 
-  const callbackUrl = `https://${new URL(SUPABASE_URL).host}/functions/v1/provision-callback?router_id=${router.id}&stage=complete`;
+  const supabaseHost = new URL(SUPABASE_URL).host;
+  const callbackUrl = `https://${supabaseHost}/functions/v1/provision-callback?router_id=${router.id}&stage=complete`;
+  // Poll URL: router calls this every minute to get commands and report heartbeat
+  const pollUrl = `https://${supabaseHost}/functions/v1/router-poll?router_id=${router.id}&token=${apiPassword}`;
 
-  // Helper: wrap a command so it never halts the script on error
   const safe = (cmd: string) => `:do { ${cmd} } on-error={}`;
-
-  const radiusService = hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp";
 
   const lines: string[] = [
     `# SmartLinkNet — Auto-provisioning script`,
     `# Router: ${safeName} | Tenant: ${tenant?.name ?? ispSlug}`,
     `# Generated: ${new Date().toISOString()}`,
+    `# Services: ${services.join(", ") || "none"} | Uplink: ${uplinkInterface}`,
     ``,
     `# 1. Identity`,
     `/system identity set name="${safeName}"`,
     ``,
-    `# 2. Bridge — create only if missing`,
+    `# 2. Bridge`,
     safe(`/interface bridge add name=${bridgeName} protocol-mode=rstp comment="SmartLinkNet"`),
   ];
 
-  // Bridge ports — always remove from any bridge first, then add to ours
+  // Bridge ports
   for (const port of bridgePorts) {
     lines.push(safe(`/interface bridge port remove [find interface=${port}]`));
-    lines.push(safe(`/interface bridge port add bridge=${bridgeName} interface=${port}`));
+    lines.push(safe(`/interface bridge port add bridge=${bridgeName} interface=${port} comment="SmartLinkNet"`));
   }
 
   lines.push(
     ``,
-    `# 3. Gateway IP`,
+    `# 3. Gateway IP on bridge`,
     safe(`/ip address remove [find interface=${bridgeName}]`),
     safe(`/ip address add address=${bridgeAddress} interface=${bridgeName} comment="SmartLinkNet gateway"`),
     ``,
@@ -127,20 +130,15 @@ serve(async (req: Request) => {
     `# 5. DHCP Server`,
     safe(`/ip dhcp-server remove [find name=${companySlug}-dhcp]`),
     `/ip dhcp-server add name=${companySlug}-dhcp interface=${bridgeName} address-pool=${companySlug}-pool lease-time=1h disabled=no`,
-    safe(`/ip dhcp-server network remove [find]`),
+    safe(`/ip dhcp-server network remove [find address=${subnet}]`),
     `/ip dhcp-server network add address=${subnet} gateway=${gatewayIp} dns-server=8.8.8.8,8.8.4.4`,
     ``,
-    `# 6. NAT — detect uplink (first ethernet not in bridge)`,
-    `:local uplinkName "ether1"`,
-    `:foreach iface in=[/interface ethernet find] do={ :local n [/interface ethernet get $iface name]; :if ([:len [/interface bridge port find interface=$n]] = 0) do={ :set uplinkName $n } }`,
+    `# 6. NAT masquerade on uplink`,
     safe(`/ip firewall nat remove [find comment="SmartLinkNet NAT"]`),
-    `/ip firewall nat add chain=srcnat out-interface=$uplinkName action=masquerade comment="SmartLinkNet NAT"`,
+    `/ip firewall nat add chain=srcnat out-interface=${uplinkInterface} action=masquerade comment="SmartLinkNet NAT"`,
     ``,
     `# 7. DNS`,
     `/ip dns set allow-remote-requests=yes servers=8.8.8.8,8.8.4.4`,
-  );
-
-  lines.push(
     ``,
     `# 8. RADIUS`,
     safe(`/radius remove [find comment="SmartLinkNet"]`),
@@ -158,17 +156,16 @@ serve(async (req: Request) => {
       `/ip hotspot profile add name=${companySlug}-hs-profile login-by=http-pap html-directory=hotspot http-cookie-lifetime=1d use-radius=yes accounting=yes login-page="${portalLoginPage}"`,
       `/ip hotspot add name=${companySlug}-hotspot interface=${bridgeName} address-pool=${companySlug}-pool profile=${companySlug}-hs-profile disabled=no`,
       ``,
-      `# Walled Garden`,
+      `# Walled Garden — allow portal and payment URLs without login`,
       safe(`/ip hotspot walled-garden remove [find comment~"SmartLinkNet"]`),
       safe(`/ip hotspot walled-garden remove [find comment~"Supabase"]`),
       safe(`/ip hotspot walled-garden remove [find comment~"M-Pesa"]`),
-      safe(`/ip hotspot walled-garden remove [find comment~"HTTPS"]`),
       `/ip hotspot walled-garden add dst-host=smart-link-kenya.vercel.app comment="SmartLinkNet portal"`,
       `/ip hotspot walled-garden add dst-host=*.supabase.co comment="Supabase"`,
       `/ip hotspot walled-garden add dst-host=*.safaricom.com comment="M-Pesa"`,
       `/ip hotspot walled-garden add dst-host=mpesa.safaricom.co.ke comment="M-Pesa STK"`,
-      safe(`/ip hotspot walled-garden ip remove [find comment="HTTPS"]`),
-      `/ip hotspot walled-garden ip add dst-address=0.0.0.0/0 protocol=tcp dst-port=443 comment="HTTPS"`,
+      safe(`/ip hotspot walled-garden ip remove [find comment="HTTPS passthrough"]`),
+      `/ip hotspot walled-garden ip add dst-address=0.0.0.0/0 protocol=tcp dst-port=443 comment="HTTPS passthrough"`,
     );
   }
 
@@ -178,7 +175,7 @@ serve(async (req: Request) => {
       `# 10. PPPoE Server`,
       safe(`/interface pppoe-server server disable [find name=${companySlug}-pppoe]`),
       safe(`/interface pppoe-server server remove [find name=${companySlug}-pppoe]`),
-      safe(`/ppp profile remove [find name=${companySlug}-pppoe comment="SmartLinkNet"]`),
+      safe(`/ppp profile remove [find name=${companySlug}-pppoe]`),
       `/ppp profile add name=${companySlug}-pppoe use-radius=yes comment="SmartLinkNet"`,
       `/interface pppoe-server server add name=${companySlug}-pppoe interface=${bridgeName} default-profile=${companySlug}-pppoe disabled=no`,
     );
@@ -186,16 +183,25 @@ serve(async (req: Request) => {
 
   lines.push(
     ``,
-    `# 11. API user & port`,
+    `# 11. API user and port — required for SmartLinkNet management`,
     `/ip service set api port=8728 disabled=no`,
+    `/ip service set api-ssl disabled=yes`,
     safe(`/user remove [find name="${apiUsername}"]`),
-    safe(`/user add name="${apiUsername}" password="${apiPassword}" group=full comment="SmartLinkNet"`),
+    `/user add name="${apiUsername}" password="${apiPassword}" group=full comment="SmartLinkNet"`,
     ``,
-    `# 12. Heartbeat`,
+    `# 12. Poll scheduler — router calls cloud every 1 min for commands (NAT-safe)`,
+    safe(`/system scheduler remove [find name=sln-poll]`),
+    `/system scheduler add name=sln-poll interval=1m start-time=startup \\`,
+    `  on-event=":do { /tool fetch mode=https url=\\"${pollUrl}\\" http-method=post http-data=\\"\\" dst-path=sln-poll.json keep-result=yes } on-error={}" \\`,
+    `  comment="SmartLinkNet"`,
+    ``,
+    `# 13. Heartbeat scheduler — separate 5-min status ping`,
     safe(`/system scheduler remove [find name=sln-heartbeat]`),
-    `/system scheduler add name=sln-heartbeat interval=5m on-event=":do { /tool fetch mode=https url=\\"${APP_URL}/api/heartbeat?router=${router.id}\\" keep-result=no } on-error={}" comment="SmartLinkNet"`,
+    `/system scheduler add name=sln-heartbeat interval=5m start-time=startup \\`,
+    `  on-event=":do { /tool fetch mode=https url=\\"${APP_URL}/api/heartbeat?router=${router.id}\\" keep-result=no } on-error={}" \\`,
+    `  comment="SmartLinkNet"`,
     ``,
-    `# 13. Report back`,
+    `# 14. Report provisioning complete`,
     safe(`/tool fetch mode=https url="${callbackUrl}" keep-result=no`),
     `:log info "SmartLinkNet: provisioning complete for ${safeName}"`,
   );

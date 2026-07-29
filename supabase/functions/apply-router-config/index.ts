@@ -1,3 +1,15 @@
+/**
+ * apply-router-config
+ *
+ * Called by the UI after the ISP selects services in the wizard.
+ * Saves config to DB (NAS, RADIUS) and queues an apply_config command
+ * in router_commands. The router picks it up on its next 1-minute poll
+ * and executes it locally — no inbound connection needed.
+ *
+ * The provision script already ran all initial config. This function
+ * handles re-provisioning / config updates after the router is online.
+ */
+
 import { serve } from "https://deno.land/std@0.201.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -12,224 +24,169 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-async function routerExec(
-  restBase: string,
-  auth: string,
-  path: string,
-  method: "GET" | "POST" | "PATCH" | "PUT",
-  body?: Record<string, unknown>,
-): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-  try {
-    const res = await fetch(`${restBase}${path}`, {
-      method,
-      headers: { Authorization: auth, "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(2500),
-    });
-    const text = await res.text();
-    let data: unknown;
-    try { data = text ? JSON.parse(text) : undefined; } catch { data = text; }
-    return res.ok ? { ok: true, data } : { ok: false, error: `HTTP ${res.status}: ${text.slice(0, 200)}` };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? String(e) };
-  }
-}
-
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405, headers: CORS });
 
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { ...CORS, "content-type": "application/json" } });
+
   try {
     const authHeader = req.headers.get("authorization") || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-    const serviceMode = token === SERVICE_ROLE_KEY;
-
-    if (!token) return new Response(JSON.stringify({ error: "Missing token" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
+    if (!token) return json({ error: "Missing token" }, 401);
 
     const reqBody = await req.json();
     const { routerId } = reqBody ?? {};
-    if (!routerId) return new Response(JSON.stringify({ error: "Missing routerId" }), { status: 400, headers: { ...CORS, "content-type": "application/json" } });
+    if (!routerId) return json({ error: "Missing routerId" }, 400);
 
     const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { global: { fetch } });
 
-    // Load router first
-    const { data: router } = await db.from("routers").select("*").eq("id", routerId).maybeSingle();
-    if (!router) {
-      try { await db.from("provision_logs").insert({ router_id: routerId, tenant_id: null, stage: "error", message: "Router not found", success: false }); } catch {}
-      return new Response(JSON.stringify({ error: "Router not found" }), { status: 404, headers: { ...CORS, "content-type": "application/json" } });
-    }
+    // Resolve user and tenant
+    const userResp = await fetch(SUPABASE_URL.replace(/\/+$/, "") + "/auth/v1/user", {
+      headers: { Authorization: "Bearer " + token, apikey: ANON_KEY },
+    });
+    if (!userResp.ok) return json({ error: "Invalid token" }, 401);
+    const userId = (await userResp.json())?.id;
+    if (!userId) return json({ error: "Unable to resolve user" }, 401);
 
-    // Resolve tenant either from authenticated user (normal mode) or from router (service mode)
-    let tenantId: string | null = null;
-    if (!serviceMode) {
-      const userResp = await fetch(SUPABASE_URL.replace(/\/+$/, "") + "/auth/v1/user", {
-        headers: { Authorization: "Bearer " + token, apikey: ANON_KEY },
-      });
-      if (!userResp.ok) return new Response(JSON.stringify({ error: "Invalid token" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
-      const userId = (await userResp.json())?.id;
-      if (!userId) return new Response(JSON.stringify({ error: "Unable to resolve user" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
+    const { data: profile } = await db.from("profiles").select("tenant_id").eq("id", userId).maybeSingle();
+    if (!profile?.tenant_id) return json({ error: "Tenant not found" }, 401);
+    const tenantId = profile.tenant_id;
 
-      const { data: profile } = await db.from("profiles").select("tenant_id").eq("id", userId).maybeSingle();
-      if (!profile?.tenant_id) {
-        return new Response(JSON.stringify({ error: "Tenant not found" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
-      }
-      tenantId = profile.tenant_id;
-
-      if (tenantId !== (router as any).tenant_id) {
-        try { await db.from("provision_logs").insert({ router_id: routerId, tenant_id, stage: "error", message: "Permission denied: router does not belong to your tenant", success: false }); } catch {}
-        return new Response(JSON.stringify({ error: "Permission denied" }), { status: 403, headers: { ...CORS, "content-type": "application/json" } });
-      }
-    } else {
-      tenantId = (router as any).tenant_id;
-    }
+    // Load router
+    const { data: router } = await db.from("routers").select("*").eq("id", routerId).eq("tenant_id", tenantId).maybeSingle();
+    if (!router) return json({ error: "Router not found" }, 404);
 
     const log = async (stage: string, message: string, success: boolean) => {
-      try { await db.from("provision_logs").insert({ router_id: routerId, tenant_id: tenantId, stage, message, success }); } catch (_) {}
+      await db.from("provision_logs").insert({ router_id: routerId, tenant_id: tenantId, stage, message, success }).catch(() => {});
     };
 
-    // ensure router belongs to tenant (in service mode tenantId was set from router)
-    if (!tenantId) {
-      await log("error", "Unable to resolve tenant", false);
-      return new Response(JSON.stringify({ error: "Tenant not found" }), { status: 401, headers: { ...CORS, "content-type": "application/json" } });
-    }
-
-    // ── 1. Resolve RADIUS ─────────────────────────────────────────────────────
+    // ── 1. Resolve RADIUS ──────────────────────────────────────────────────
     const { data: realRadius } = await db.from("radius_servers")
       .select("id, host, auth_port, acct_port, shared_secret")
       .eq("tenant_id", tenantId).eq("is_active", true).neq("host", "pending")
       .order("priority", { ascending: true }).limit(1).maybeSingle();
 
-    if (realRadius?.host) {
-      await db.from("radius_servers").update({ host: realRadius.host, is_healthy: true })
-        .eq("tenant_id", tenantId).eq("host", "pending");
-    }
-
-    // ── 2. Fix NAS in DB ──────────────────────────────────────────────────────
-    await db.from("nas_devices").update({
-      nas_identifier: router.provisioning_identity || router.name,
-      name: router.provisioning_identity || router.name,
-      is_active: true,
+    // ── 2. Upsert NAS device ───────────────────────────────────────────────
+    const nasName = router.provisioning_identity || router.name;
+    const { data: existingNas } = await db.from("nas_devices" as any).select("id").eq("router_id", routerId).maybeSingle();
+    const nasPayload = {
+      tenant_id: tenantId, router_id: routerId, name: nasName, vendor: "mikrotik",
+      nas_identifier: nasName, shared_secret: realRadius?.shared_secret || "SmartLinkNet-Public-Fallback",
+      auth_port: realRadius?.auth_port || 1812, acct_port: realRadius?.acct_port || 1813,
+      coa_port: 3799, is_active: true, dynamic_profile_enabled: true,
       updated_at: new Date().toISOString(),
-    }).eq("router_id", routerId);
-    await log("nas", `NAS identifier set to "${router.provisioning_identity || router.name}"`, true);
-
-    // ── 3. Push live config to router via REST API ────────────────────────────
-    // public_ip = captured from provision-callback (router's outbound public IP)
-    const host = (router as any).public_ip || router.connection_string || router.ip_address;
-    const apiPort = router.api_port ?? 8728;
-    const apiUser = router.api_username;
-    const apiPass = router.api_password;
-    let routerApiOk = false;
-
-    if (!host || !apiUser || !apiPass) {
-      await log("api_check", `No IP/credentials — host=${host || "none"} user=${apiUser || "none"} — re-run provisioning script to register router`, false);
+    };
+    if ((existingNas as any)?.id) {
+      await db.from("nas_devices" as any).update(nasPayload).eq("id", (existingNas as any).id);
     } else {
-      const restBase = `http://${host}:${apiPort}/rest`;
-      const basicAuth = "Basic " + btoa(`${apiUser}:${apiPass}`);
+      await db.from("nas_devices" as any).insert(nasPayload);
+    }
+    await log("nas", `NAS registered: "${nasName}"`, true);
 
-      await log("api_check", `Connecting to ${host}:${apiPort} as "${apiUser}"...`, true);
+    // ── 3. Upsert RADIUS server record ─────────────────────────────────────
+    const { data: existingRadius } = await db.from("radius_servers" as any).select("id").eq("tenant_id", tenantId).eq("name", nasName).maybeSingle();
+    const radiusPayload = {
+      tenant_id: tenantId, name: nasName, auth_port: 1812, acct_port: 1813,
+      shared_secret: "SmartLinkNet-Public-Fallback", protocol: "mschapv2",
+      is_primary: true, is_active: true, is_healthy: true,
+      timeout_ms: 3000, retry_count: 3, priority: 1, updated_at: new Date().toISOString(),
+    };
+    if ((existingRadius as any)?.id) {
+      await db.from("radius_servers" as any).update(radiusPayload).eq("id", (existingRadius as any).id);
+    } else {
+      await db.from("radius_servers" as any).insert({ ...radiusPayload, host: realRadius?.host || "pending" });
+    }
+    await log("radius_db", `RADIUS record saved — host: ${realRadius?.host || "pending"}`, true);
 
-      const ping = await routerExec(restBase, basicAuth, "/system/identity", "GET");
-      if (!ping.ok) {
-        await log("api_check", `Router API unreachable at ${host}:${apiPort} — ${ping.error}`, false);
-      } else {
-        routerApiOk = true;
-        await log("api_check", `Router API reachable at ${host}:${apiPort}`, true);
-
-        const services: string[] = router.services || [];
-        const hasHotspot = services.includes("hotspot");
-        const hasPppoe = services.includes("pppoe");
-        const radiusHost = realRadius?.host ?? null;
-        const radiusSecret = realRadius?.shared_secret ?? "SmartLinkNet-Public-Fallback";
-        const radiusAuthPort = realRadius?.auth_port ?? 1812;
-        const radiusAcctPort = realRadius?.acct_port ?? 1813;
-        const radiusService = hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp";
-
-        const { data: tenant } = await db.from("tenants").select("slug").eq("id", tenantId).maybeSingle();
-        const ispSlug = (tenant as any)?.slug ?? tenantId;
-        const companySlug = ispSlug.replace(/[^a-z0-9]/g, "-").toLowerCase();
-
-        // Identity
-        const idRes = await routerExec(restBase, basicAuth, "/system/identity", "POST", { name: router.provisioning_identity || router.name });
-        await log("identity", idRes.ok ? `Identity set to "${router.provisioning_identity || router.name}"` : `Identity failed: ${idRes.error}`, idRes.ok);
-
-        // RADIUS
-        if (radiusHost) {
-          const listRes = await routerExec(restBase, basicAuth, "/radius?comment=SmartLinkNet", "GET");
-          if (listRes.ok && Array.isArray(listRes.data)) {
-            for (const entry of listRes.data as any[]) {
-              await routerExec(restBase, basicAuth, `/radius/${entry[".id"]}`, "POST", { ".id": entry[".id"] });
-            }
-          }
-          const radRes = await routerExec(restBase, basicAuth, "/radius/add", "POST", {
-            service: radiusService, address: radiusHost, secret: radiusSecret,
-            "authentication-port": String(radiusAuthPort), "accounting-port": String(radiusAcctPort),
-            timeout: "3000ms", comment: "SmartLinkNet",
-          });
-          await log("radius", radRes.ok ? `RADIUS configured → ${radiusHost}:${radiusAuthPort}` : `RADIUS failed: ${radRes.error}`, radRes.ok);
-          await routerExec(restBase, basicAuth, "/radius/incoming/set", "POST", { accept: "yes", port: "3799" });
-        } else {
-          await log("radius", "No RADIUS host in DB yet — skipped", false);
-        }
-
-        // Hotspot profile
-        if (hasHotspot) {
-          const portalUrl = `${APP_URL}/portal?isp=${ispSlug}&mac=$(mac)&ip=$(ip)&url=$(link-orig)&dst=$(dst-ip)`;
-          const hsProfiles = await routerExec(restBase, basicAuth, `/ip/hotspot/profile?name=${companySlug}-hs-profile`, "GET");
-          if (hsProfiles.ok && Array.isArray(hsProfiles.data) && hsProfiles.data.length) {
-            const pid = (hsProfiles.data as any[])[0][".id"];
-            const hsRes = await routerExec(restBase, basicAuth, `/ip/hotspot/profile/${pid}`, "PATCH", {
-              "login-page": portalUrl,
-              ...(radiusHost ? { "use-radius": "yes", accounting: "yes" } : {}),
-            });
-            await log("hotspot_profile", hsRes.ok ? "Hotspot profile login-page updated" : `Hotspot profile failed: ${hsRes.error}`, hsRes.ok);
-          } else {
-            await log("hotspot_profile", "Hotspot profile not found on router", false);
-          }
-        }
-
-        // PPPoE profile
-        if (hasPppoe && radiusHost) {
-          const pppProfiles = await routerExec(restBase, basicAuth, `/ppp/profile?name=${companySlug}-pppoe`, "GET");
-          if (pppProfiles.ok && Array.isArray(pppProfiles.data) && pppProfiles.data.length) {
-            const pid = (pppProfiles.data as any[])[0][".id"];
-            const pppRes = await routerExec(restBase, basicAuth, `/ppp/profile/${pid}`, "PATCH", { "use-radius": "yes" });
-            await log("pppoe_profile", pppRes.ok ? "PPPoE profile updated to use RADIUS" : `PPPoE profile failed: ${pppRes.error}`, pppRes.ok);
-          } else {
-            await log("pppoe_profile", "PPPoE profile not found on router", false);
-          }
-        }
-
-        // Heartbeat scheduler
-        const schedulers = await routerExec(restBase, basicAuth, "/system/scheduler?name=sln-heartbeat", "GET");
-        if (schedulers.ok && Array.isArray(schedulers.data) && schedulers.data.length) {
-          const schedId = (schedulers.data as any[])[0][".id"];
-          const heartbeatUrl = `${APP_URL}/api/heartbeat?router=${routerId}`;
-          const schedRes = await routerExec(restBase, basicAuth, `/system/scheduler/${schedId}`, "PATCH", {
-            "on-event": `:do { /tool fetch mode=https url="${heartbeatUrl}" keep-result=no } on-error={}`,
-          });
-          await log("heartbeat", schedRes.ok ? "Heartbeat scheduler updated" : `Heartbeat failed: ${schedRes.error}`, schedRes.ok);
-        } else {
-          await log("heartbeat", "Heartbeat scheduler not found on router", false);
-        }
-      }
+    // ── 4. Save hotspot portal URL ─────────────────────────────────────────
+    const services: string[] = router.services || [];
+    const hasHotspot = services.includes("hotspot");
+    if (hasHotspot) {
+      const { data: tenantRow } = await db.from("tenants").select("slug").eq("id", tenantId).maybeSingle();
+      const ispSlug = (tenantRow as any)?.slug ?? tenantId;
+      const portalLoginPage = `${APP_URL}/portal?isp=${ispSlug}&mac=$(mac)&ip=$(ip)&url=$(link-orig)&dst=$(dst-ip)`;
+      await (db as any).from("settings").upsert(
+        { tenant_id: tenantId, key: "hotspot_login_page", value: portalLoginPage },
+        { onConflict: "tenant_id,key" }
+      ).catch(() => {});
     }
 
-    // ── 4. Mark router status ─────────────────────────────────────────────────
+    // ── 5. Check if router has polled recently (within 3 minutes) ──────────
+    const lastPoll = router.last_poll_at ? new Date(router.last_poll_at) : null;
+    const pollAgeMs = lastPoll ? Date.now() - lastPoll.getTime() : Infinity;
+    const routerIsPolling = pollAgeMs < 3 * 60 * 1000; // polled within 3 min
+
+    if (!routerIsPolling) {
+      // Router hasn't polled yet — the provision script hasn't run or hasn't finished
+      // The script will configure everything when it runs. Mark DB as saved.
+      await log("config_saved", "DB config saved — waiting for router to run provisioning script", true);
+      await log("complete", `Config queued — services: ${services.join(", ") || "none"} | RADIUS: ${realRadius?.host || "pending"} | Router will apply on next poll`, true);
+
+      await db.from("routers").update({
+        status: "online",
+        api_connected: false,
+        provisioned_at: new Date().toISOString(),
+      }).eq("id", routerId);
+
+      return json({ ok: true, queued: false, message: "DB saved — router not yet polling" });
+    }
+
+    // ── 6. Router is polling — queue apply_config command ─────────────────
+    // Build the config payload the router will apply via its local RouterOS API
+    const { data: tenant } = await db.from("tenants").select("slug").eq("id", tenantId).maybeSingle();
+    const ispSlug = (tenant as any)?.slug ?? tenantId;
+    const companySlug = ispSlug.replace(/[^a-z0-9]/g, "-").toLowerCase();
+    const bridgeName = `${companySlug}-bridge`;
+    const subnet = router.subnet || "172.31.0.0/16";
+    const [networkAddr, prefixLen] = subnet.split("/");
+    const parts = networkAddr.split(".").map(Number);
+    parts[3] = 1;
+    const gatewayIp = parts.join(".");
+    const bridgeAddress = `${gatewayIp}/${prefixLen}`;
+    const poolStart = `${parts[0]}.${parts[1]}.${parts[2]}.10`;
+    const poolEnd = `${parts[0]}.${parts[1]}.${parts[2]}.254`;
+    const bridgePorts: string[] = router.bridge_ports?.length ? router.bridge_ports : [router.bridge_port || "ether2"];
+    const uplinkInterface = router.uplink_interface || "ether1";
+    const radiusHost = realRadius?.host && realRadius.host !== "pending" ? realRadius.host : new URL(APP_URL).hostname;
+    const radiusSecret = realRadius?.shared_secret || "SmartLinkNet-Public-Fallback";
+    const radiusAuthPort = realRadius?.auth_port || 1812;
+    const radiusAcctPort = realRadius?.acct_port || 1813;
+    const hasPppoe = services.includes("pppoe");
+    const radiusService = hasHotspot && hasPppoe ? "hotspot,ppp" : hasHotspot ? "hotspot" : "ppp";
+    const portalLoginPage = `${APP_URL}/portal?isp=${ispSlug}&mac=$(mac)&ip=$(ip)&url=$(link-orig)&dst=$(dst-ip)`;
+
+    const commandPayload = {
+      bridgeName, bridgePorts, uplinkInterface, bridgeAddress, subnet,
+      gatewayIp, poolStart, poolEnd, companySlug,
+      radiusHost, radiusSecret, radiusAuthPort, radiusAcctPort, radiusService,
+      hasHotspot, hasPppoe, portalLoginPage,
+      routerName: router.provisioning_identity || router.name,
+    };
+
+    // Queue the command — router picks it up within 1 minute
+    const { data: cmd } = await db.from("router_commands").insert({
+      router_id: routerId,
+      tenant_id: tenantId,
+      command: "apply_config",
+      payload: commandPayload,
+      status: "pending",
+      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(), // 10 min expiry
+    }).select("id").single();
+
+    await log("config_queued", `Config queued (cmd: ${(cmd as any)?.id?.slice(0, 8)}) — router will apply within 1 minute`, true);
+    await log("complete", `Apply queued — services: ${services.join(", ") || "none"} | RADIUS: ${radiusHost} | Waiting for router poll`, true);
+
     await db.from("routers").update({
-      status: routerApiOk ? "active" : "online",
-      api_connected: routerApiOk,
+      status: "online",
+      api_connected: true,
       provisioned_at: new Date().toISOString(),
     }).eq("id", routerId);
 
-    // ── 5. Complete log — triggers applyDone on UI via realtime ───────────────
-    const summary = `services: ${(router.services || []).join(", ") || "none"} | RADIUS: ${realRadius?.host || "pending"} | API: ${routerApiOk ? "connected" : "unreachable"}`;
-    await log("complete", `Apply complete — ${summary}`, routerApiOk);
-
-    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
+    return json({ ok: true, queued: true, commandId: (cmd as any)?.id });
   } catch (err: any) {
-    const msg = err?.message ?? String(err);
-    console.error("apply-router-config error:", msg);
-    return new Response(JSON.stringify({ error: "Internal error", detail: msg }), { status: 500, headers: { ...CORS, "content-type": "application/json" } });
+    console.error("apply-router-config error:", err?.message);
+    return json({ error: "Internal error", detail: err?.message }, 500);
   }
 });
