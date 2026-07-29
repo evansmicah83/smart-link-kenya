@@ -426,6 +426,10 @@ function RoutersPage() {
         }
         const level: LogLevel = row.stage === "api_warning" ? "warn" : row.success ? "success" : "error";
         addLog(row.message || row.stage, level);
+        // queued = cloud done, waiting for router to execute
+        if (row.stage === "queued") {
+          addLog("Waiting for router to pick up script (≤1 min)...", "info");
+        }
         if (row.stage === "complete") {
           if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
           setApplyDone(true);
@@ -437,12 +441,12 @@ function RoutersPage() {
 
     addLog("Saving final configuration...", "info");
 
-    // Safety timeout — if no realtime log within 30s, show error
+    // Safety timeout — router can take up to 1 min to poll, give it 3 min total
     const safetyTimer = setTimeout(() => {
       if (gotFirstLog.current) return;
-      addLog("No response from server — check your connection and retry.", "error");
+      addLog("No response from server after 3 min — check router is online and retry.", "error");
       setApplyDone(true);
-    }, 30_000);
+    }, 3 * 60_000);
     safetyTimerRef.current = safetyTimer;
 
     try {
@@ -1106,14 +1110,18 @@ function RoutersPage() {
             <h2 className="font-bold text-base mb-1">
               {applyDone
                 ? logLines.some(l => l.level === "error") ? "⚠ Deployment Error" : "✓ Router Linked"
-                : "Registering router..."}
+                : logLines.some(l => l.stage === "queued" || l.message?.includes("Waiting for router"))
+                  ? "⏳ Waiting for router..."
+                  : "Registering router..."}
             </h2>
             <p className="text-xs text-muted-foreground mb-5">
               {applyDone
                 ? logLines.some(l => l.level === "error")
                   ? "An error occurred. Check logs and retry."
-                  : "NAS and RADIUS registered. Router is polling cloud every 1 minute for commands."
-                : "Saving NAS, RADIUS records and queuing configuration commands..."}
+                  : "Router fully configured — hotspot and PPPoE live."
+                : logLines.some(l => l.message?.includes("Waiting for router"))
+                  ? "Router will pick up the script on its next poll (≤1 min) and report each step live."
+                  : "Saving NAS, RADIUS records and queuing configuration commands..."}
             </p>
 
             {/* Summary grid */}
