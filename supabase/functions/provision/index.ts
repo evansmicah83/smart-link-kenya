@@ -133,20 +133,21 @@ serve(async (req: Request) => {
 
   const safe = (cmd: string) => ":do { " + cmd + " } on-error={}";
 
-  // Poll on-event: fetch plain text from router-poll.
-  // If response is a URL (starts with https), fetch it as a script and import it.
-  // No JSON parsing needed — router-poll returns bare URL or "ok".
-  const pollOnEvent = [
+  // Poll on-event: stored as a RouterOS script so the scheduler on-event is just one word.
+  // This avoids ALL quoting/escaping issues with URLs inside on-event strings.
+  // The script fetches plain text from router-poll; if it starts with https:// it re-provisions.
+  const pollScriptBody = [
     ":do {",
-    "/tool fetch mode=https url='" + pollUrl + "' dst-path=sln-poll.txt keep-result=yes;",
+    "/tool fetch mode=https url=" + JSON.stringify(pollUrl) + " dst-path=sln-poll.txt keep-result=yes;",
     ":local u [/file get sln-poll.txt contents];",
-    ":if ([:find $u \"https://\"] = 0) do={",
-    "  /tool fetch mode=https url=$u dst-path=sln-reprovision.rsc;",
-    "  :delay 3s;",
-    "  /import sln-reprovision.rsc",
+    ":if ([:find $u \"https\"] = 0) do={",
+    "/tool fetch mode=https url=$u dst-path=sln-reprovision.rsc;",
+    ":delay 3s;",
+    "/import sln-reprovision.rsc",
     "}",
     "} on-error={}",
   ].join(" ");
+  const pollOnEvent = "sln-poll-script";
 
   const lines: string[] = [
     "# SmartLinkNet -- Auto-provisioning script",
@@ -246,9 +247,11 @@ serve(async (req: Request) => {
     safe('/user remove [find name="' + apiUsername + '"]'),
     '/user add name="' + apiUsername + '" password="' + apiPassword + '" group=full comment="SmartLinkNet"',
     "",
-    "# 12. Poll scheduler -- calls home every 1 min, auto-applies re_provision if queued",
+    "# 12. Poll script + scheduler -- calls home every 1 min, auto-applies re_provision if queued",
+    safe("/system script remove [find name=sln-poll-script]"),
+    "/system script add name=sln-poll-script source=" + JSON.stringify(pollScriptBody) + ' comment="SmartLinkNet"',
     safe("/system scheduler remove [find name=sln-poll]"),
-    '/system scheduler add name=sln-poll interval=1m start-time=startup on-event="' + pollOnEvent + '" comment="SmartLinkNet"',
+    '/system scheduler add name=sln-poll interval=1m start-time=startup on-event=sln-poll-script comment="SmartLinkNet"',
     "",
     "# 13. Report provisioning complete",
     safe('/tool fetch mode=https url="' + callbackUrl + '" keep-result=no'),
