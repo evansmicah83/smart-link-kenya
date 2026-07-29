@@ -1,16 +1,27 @@
 #!/usr/bin/env bash
 # ============================================================
-# SmartLinkNet FreeRADIUS Setup Script
-# Ubuntu 22.04 LTS — installs FreeRADIUS 3.x with PostgreSQL
+# SmartLinkNet Platform — FreeRADIUS Infrastructure Setup
 #
-# Usage:
+# This script is run ONCE by the SmartLinkNet operator to
+# deploy the shared FreeRADIUS server that serves ALL ISPs
+# on the platform. ISPs never run this — it is part of
+# SmartLinkNet's own infrastructure, like a database server.
+#
+# After running, all ISP routers provisioned through
+# SmartLinkNet automatically point to this FreeRADIUS server.
+# No ISP configuration required.
+#
+# Requirements: Ubuntu 22.04 LTS VPS (Hetzner/DO/AWS/GCP)
+#
+# Usage (run as root on your VPS):
 #   export DB_HOST="db.tghaarhofriakwgvqmpm.supabase.co"
 #   export DB_PORT="5432"
 #   export DB_NAME="postgres"
 #   export DB_USER="postgres"
 #   export DB_PASS="your-supabase-db-password"
-#   export FR_SECRET="your-shared-secret-for-mikrotik"
-#   curl -fsSL https://your-domain/setup.sh | bash
+#   export FR_SECRET="platform-wide-nas-shared-secret"
+#   export SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
+#   bash freeradius/setup.sh
 # ============================================================
 set -euo pipefail
 
@@ -310,3 +321,39 @@ echo "  4. Test auth:  radtest <username> <password> $PUBLIC_IP 1812 <secret>"
 echo ""
 echo -e "${GREEN}  FreeRADIUS is live and reading from Supabase PostgreSQL.${NC}"
 echo ""
+
+# ── Auto-register FreeRADIUS IP in platform_settings ─────────────────────────────
+if [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+  info "Registering FreeRADIUS IP in SmartLinkNet platform settings..."
+  SUPABASE_URL="https://tghaarhofriakwgvqmpm.supabase.co"
+  curl -s -X POST \
+    "${SUPABASE_URL}/rest/v1/platform_settings" \
+    -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+    -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+    -H "Content-Type: application/json" \
+    -H "Prefer: resolution=merge-duplicates" \
+    -d "$(cat <<JSON
+{
+  "key": "freeradius",
+  "value": {
+    "primary_ip": "${PUBLIC_IP}",
+    "secondary_ip": null,
+    "auth_port": 1812,
+    "acct_port": 1813,
+    "coa_port": 3799,
+    "interim_interval": 300,
+    "timeout_ms": 3000,
+    "retry_count": 3,
+    "shared_secret": "${FR_SECRET}",
+    "coa_shim_port": 8080,
+    "deployed": true
+  }
+}
+JSON
+    )" > /dev/null
+  info "✓ platform_settings.freeradius.primary_ip = ${PUBLIC_IP}"
+  info "✓ All future ISP router provisioning will automatically use this FreeRADIUS server"
+else
+  warn "SUPABASE_SERVICE_ROLE_KEY not set — manually update platform_settings:"
+  warn "  UPDATE platform_settings SET value = value || '{\"primary_ip\":\"${PUBLIC_IP}\",\"deployed\":true}' WHERE key = 'freeradius';"
+fi
