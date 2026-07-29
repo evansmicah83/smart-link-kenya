@@ -632,7 +632,7 @@ function RoutersPage() {
             ) : (
               <div className="divide-y divide-border">
                 {filtered.map((r) => {
-                  const isOnline = r.status === "online" || r.status === "active";
+                  const isOnline = isRouterOnline(r);
                   return (
                     <div key={r.id} className="grid sm:grid-cols-[1.5fr_1fr_1fr_auto] gap-4 p-4 sm:p-6 hover:bg-muted/50 transition-colors">
                       <div className="min-w-0">
@@ -760,13 +760,13 @@ function RoutersPage() {
               <div className="bg-card w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl border border-border flex flex-col max-h-[92dvh] sm:max-h-[88vh] overflow-hidden">
                 <div className="flex items-start justify-between px-5 py-4 border-b border-border shrink-0">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className={`w-2.5 h-2.5 rounded-full shrink-0 mt-0.5 ${viewingRouter.status === "online" || viewingRouter.status === "active" ? "bg-success" : "bg-destructive"}`} />
+                    <div className={`w-2.5 h-2.5 rounded-full shrink-0 mt-0.5 ${isRouterOnline(viewingRouter) ? "bg-success" : "bg-destructive"}`} />
                     <div className="min-w-0">
                       <h2 className="text-base font-bold truncate">{viewingRouter.name}</h2>
                       <p className="text-xs text-muted-foreground mt-0.5">
                         {viewingRouter.model || "RouterOS"} ·{" "}
-                        <span className={viewingRouter.status === "online" || viewingRouter.status === "active" ? "text-success font-medium" : "text-destructive font-medium"}>
-                          {viewingRouter.status === "online" || viewingRouter.status === "active" ? "Online" : "Offline"}
+                        <span className={isRouterOnline(viewingRouter) ? "text-success font-medium" : "text-destructive font-medium"}>
+                          {isRouterOnline(viewingRouter) ? "Online" : "Offline"}
                         </span>
                         {viewingRouter.last_poll_at && (
                           <span className="ml-2 text-muted-foreground">
@@ -798,7 +798,7 @@ function RoutersPage() {
                       {[
                         { label: "Name", value: viewingRouter.name },
                         { label: "Model", value: viewingRouter.model || "—" },
-                        { label: "Status", value: (viewingRouter.status === "online" || viewingRouter.status === "active") ? "Online" : "Offline", status: viewingRouter.status },
+                        { label: "Status", value: isRouterOnline(viewingRouter) ? "Online" : "Offline", status: isRouterOnline(viewingRouter) ? "online" : "offline" },
                         { label: "Public IP", value: viewingRouter.public_ip || "—" },
                         { label: "Services", value: viewingRouter.services?.map((s: string) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ") || "—" },
                         { label: "Bridge Ports", value: viewingRouter.bridge_ports?.join(", ") || viewingRouter.bridge_port || "—" },
@@ -849,7 +849,7 @@ function RoutersPage() {
                     <div className="space-y-4">
                       <div className="rounded-xl border border-border overflow-hidden">
                         {[
-                          { label: "Router Status", ok: viewingRouter.status === "online" || viewingRouter.status === "active", okText: "Online", failText: "Offline" },
+                          { label: "Router Status", ok: isRouterOnline(viewingRouter), okText: "Online", failText: "Offline" },
                           { label: "Cloud Polling", ok: !!viewingRouter.api_connected, okText: "Active — polls every 1 min", failText: "Not polling — re-run script" },
                           { label: "Services", ok: !!viewingRouter.services?.length, okText: viewingRouter.services?.join(", "), failText: "Not configured" },
                           { label: "Bridge Ports", ok: !!viewingRouter.bridge_port || !!viewingRouter.bridge_ports?.length, okText: viewingRouter.bridge_ports?.join(", ") || viewingRouter.bridge_port, failText: "Not set" },
