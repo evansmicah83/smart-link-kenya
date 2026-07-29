@@ -424,12 +424,8 @@ function RoutersPage() {
           gotFirstLog.current = true;
           if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
         }
-        const level: LogLevel = row.stage === "api_warning" ? "warn" : row.success ? "success" : "error";
+        const level: LogLevel = row.success ? "success" : "error";
         addLog(row.message || row.stage, level);
-        // queued = cloud done, waiting for router to execute
-        if (row.stage === "queued") {
-          addLog("Waiting for router to pick up script (≤1 min)...", "info");
-        }
         if (row.stage === "complete") {
           if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
           setApplyDone(true);
@@ -439,19 +435,21 @@ function RoutersPage() {
       .subscribe();
     realtimeChannelRef.current = channel;
 
-    addLog("Saving final configuration...", "info");
+    addLog("Activating router — running full configuration now...", "info");
 
-    // Safety timeout — router can take up to 1 min to poll, give it 3 min total
+    // Safety timeout — 30s, the router is already online so callbacks fire immediately
     const safetyTimer = setTimeout(() => {
       if (gotFirstLog.current) return;
-      addLog("No response from server after 3 min — check router is online and retry.", "error");
+      addLog("No response — check router is still online and retry.", "error");
       setApplyDone(true);
-    }, 3 * 60_000);
+    }, 30_000);
     safetyTimerRef.current = safetyTimer;
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token ?? null;
+      // apply-router-config registers NAS/RADIUS in DB then immediately triggers
+      // the router to re-fetch and re-run the provision script via router-poll
       const res = await fetch(`${SUPABASE_FUNCTIONS}/apply-router-config`, {
         method: "POST",
         headers: { "content-type": "application/json", Authorization: `Bearer ${accessToken}` },
@@ -459,12 +457,12 @@ function RoutersPage() {
       });
       if (!res.ok) {
         clearTimeout(safetyTimer);
-        addLog(`Apply failed: ${await res.text()}`, "error");
+        addLog(`Activation failed: ${await res.text()}`, "error");
         setApplyDone(true);
       }
     } catch (err: any) {
       clearTimeout(safetyTimer);
-      addLog(err.message || "Apply failed", "error");
+      addLog(err.message || "Activation failed", "error");
       setApplyDone(true);
     }
   }
@@ -1109,19 +1107,15 @@ function RoutersPage() {
           <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
             <h2 className="font-bold text-base mb-1">
               {applyDone
-                ? logLines.some(l => l.level === "error") ? "⚠ Deployment Error" : "✓ Router Linked"
-                : logLines.some(l => l.stage === "queued" || l.message?.includes("Waiting for router"))
-                  ? "⏳ Waiting for router..."
-                  : "Registering router..."}
+                ? logLines.some(l => l.level === "error") ? "⚠ Deployment Error" : "✓ Router Configured"
+                : "Configuring router..."}
             </h2>
             <p className="text-xs text-muted-foreground mb-5">
               {applyDone
                 ? logLines.some(l => l.level === "error")
                   ? "An error occurred. Check logs and retry."
-                  : "Router fully configured — hotspot and PPPoE live."
-                : logLines.some(l => l.message?.includes("Waiting for router"))
-                  ? "Router will pick up the script on its next poll (≤1 min) and report each step live."
-                  : "Saving NAS, RADIUS records and queuing configuration commands..."}
+                  : "Router fully configured — hotspot and PPPoE live and ready for subscribers."
+                : "Router is applying configuration — each step reports back live as it executes..."}
             </p>
 
             {/* Summary grid */}

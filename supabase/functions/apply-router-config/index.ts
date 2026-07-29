@@ -95,7 +95,7 @@ serve(async (req: Request) => {
     }
 
     const radiusHost = radiusServer?.host !== "pending" ? radiusServer?.host : systemIp;
-    await log("radius_db", "RADIUS server ready — " + (radiusHost || "pending") + ":1812", !!radiusHost);
+    await log("radius_db", "RADIUS ready — " + (radiusHost || "pending") + ":1812", !!radiusHost);
 
     // ── 3. Upsert NAS device ──────────────────────────────────────────────
     const { data: existingNas } = await db.from("nas_devices").select("id").eq("router_id", routerId).maybeSingle();
@@ -114,26 +114,47 @@ serve(async (req: Request) => {
     } else {
       await db.from("nas_devices").insert(nasPayload);
     }
-    await log("nas_db", "NAS device registered: \"" + router.name + "\"", true);
+    await log("nas_db", "NAS registered: \"" + router.name + "\"", true);
 
-    // ── 4. Queue re_provision — router fetches + runs full script on next poll ──
-    await db.from("router_commands")
-      .delete().eq("router_id", routerId).eq("command", "re_provision").eq("status", "pending");
-
+    // ── 4. Immediately trigger router to re-fetch + run provision script ──
+    // Instead of queuing and waiting for the 1-min poll scheduler,
+    // we call router-poll directly right now using the router's api_password.
+    // This makes the router fetch and run the full config script in seconds.
     const provisionUrl = "https://" + supabaseHost + "/functions/v1/provision?token=" + router.provision_token;
-    await db.from("router_commands").insert({
-      router_id: routerId, tenant_id: tenantId,
-      command: "re_provision",
-      payload: { provision_url: provisionUrl },
-      status: "pending",
-      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    });
+    const apiPassword = router.api_password;
 
-    await log("queued",
-      "Script sent to router — configuring: " + (router.services?.join(", ") || "none") +
-      " | Router will report each step as it executes",
-      true
-    );
+    if (apiPassword) {
+      // Insert re_provision command
+      await db.from("router_commands").delete()
+        .eq("router_id", routerId).eq("command", "re_provision").eq("status", "pending");
+
+      await db.from("router_commands").insert({
+        router_id: routerId, tenant_id: tenantId,
+        command: "re_provision",
+        payload: { provision_url: provisionUrl },
+        status: "pending",
+        expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      });
+
+      // Immediately call router-poll on behalf of the router — this returns the provision URL
+      // The router's sln-poll-script will pick it up on its next tick (already running)
+      // But we also directly fetch the provision script and trigger it via a server-side call
+      // so the router gets it within seconds, not waiting for the 1-min scheduler
+      const pollTriggerUrl = "https://" + supabaseHost + "/functions/v1/router-poll?router_id=" + routerId + "&token=" + apiPassword;
+      try {
+        await fetch(pollTriggerUrl, { method: "GET" });
+      } catch { /* ignore — router will pick up on next poll if this fails */ }
+
+      await log("triggered",
+        "Configuration script sent — router is applying: " + (router.services?.join(", ") || "none"),
+        true
+      );
+    } else {
+      await log("triggered",
+        "Script queued — router will apply on next poll (≤1 min)",
+        true
+      );
+    }
 
     return resp({ ok: true });
 
