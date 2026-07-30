@@ -43,15 +43,18 @@ export class NasManagementService {
   async list(tenantId: TenantRef): Promise<(NasDevice & { routerName?: string })[]> {
     const { data, error } = await (supabase as any)
       .from("nas_devices")
-      .select("*, routers(name, status)")
+      .select("*, routers(id, name, status)")
       .eq("tenant_id", tenantId)
       .order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
-    return (data ?? []).map((r: any) => ({
-      ...mapRow(r),
-      routerName: r.routers?.name ?? null,
-      routerStatus: r.routers?.status ?? null,
-    }));
+    return (data ?? [])
+      // Drop orphans: router_id set but the router row was deleted (join returns null)
+      .filter((r: any) => !r.router_id || r.routers?.id)
+      .map((r: any) => ({
+        ...mapRow(r),
+        routerName: r.routers?.name ?? null,
+        routerStatus: r.routers?.status ?? null,
+      }));
   }
 
   async get(nasId: NasDeviceRef): Promise<NasDevice | null> {
