@@ -151,6 +151,7 @@ function RoutersPage() {
   const [syncing, setSyncing] = useState<Set<string>>(new Set());
   const [viewingRouter, setViewingRouter] = useState<any | null>(null);
   const [viewTab, setViewTab] = useState<"details" | "scripts" | "diagnostics">("details");
+  const [refreshingView, setRefreshingView] = useState(false);
 
   // ── Queries ───────────────────────────────────────────────────
   const tenantQuery = useQuery({
@@ -502,6 +503,22 @@ function RoutersPage() {
     }
   }
 
+  // ── Refresh viewingRouter from DB ────────────────────────────
+  async function handleRefreshViewingRouter() {
+    if (!viewingRouter) return;
+    setRefreshingView(true);
+    try {
+      const { data } = await supabase.from("routers").select("*").eq("id", viewingRouter.id).single();
+      if (!data) return;
+      setViewingRouter((prev: any) => ({ ...prev, ...data }));
+      queryClient.setQueryData(["routers", tenantId], (old: any[]) =>
+        old ? old.map((r) => r.id === data.id ? { ...r, ...data } : r) : old
+      );
+    } finally {
+      setRefreshingView(false);
+    }
+  }
+
   // ── Edit router ───────────────────────────────────────────────
   async function handleEditRouter() {
     if (!editingRouter || !editName.trim()) { toast.error("Router name is required"); return; }
@@ -816,15 +833,26 @@ function RoutersPage() {
                       </p>
                     </div>
                   </div>
-                  <button onClick={() => setViewingRouter(null)}
-                    className="shrink-0 ml-3 w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-                    <X className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0 ml-3">
+                    <button onClick={handleRefreshViewingRouter} disabled={refreshingView}
+                      title="Refresh from database"
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50">
+                      <RefreshCw className={`w-3.5 h-3.5 ${refreshingView ? "animate-spin" : ""}`} />
+                    </button>
+                    <button onClick={() => setViewingRouter(null)}
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex gap-1 px-5 py-2.5 border-b border-border shrink-0 bg-muted/30">
                   {(["details", "scripts", "diagnostics"] as const).map((tab) => (
-                    <button key={tab} onClick={() => setViewTab(tab)}
+                    <button key={tab} onClick={() => {
+                      setViewTab(tab);
+                      // Auto-refresh data when switching to diagnostics
+                      if (tab === "diagnostics") handleRefreshViewingRouter();
+                    }}
                       className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors capitalize
                         ${viewTab === tab ? "bg-card text-foreground shadow-sm border border-border" : "text-muted-foreground hover:text-foreground"}`}>
                       {tab}
@@ -919,6 +947,20 @@ function RoutersPage() {
 
                   {viewTab === "diagnostics" && (
                     <div className="space-y-4">
+                      {/* Telemetry freshness notice */}
+                      <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 flex items-center justify-between gap-3">
+                        <p className="text-xs text-muted-foreground">
+                          Telemetry updates every 5 min · Discovery runs once at provision.
+                          {viewingRouter.last_poll_at && (
+                            <span className="ml-1">Last poll: {new Date(viewingRouter.last_poll_at).toLocaleTimeString()}</span>
+                          )}
+                        </p>
+                        <button onClick={handleRefreshViewingRouter} disabled={refreshingView}
+                          className="flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 whitespace-nowrap disabled:opacity-50">
+                          <RefreshCw className={`w-3 h-3 ${refreshingView ? "animate-spin" : ""}`} />
+                          Refresh
+                        </button>
+                      </div>
                       {/* Live telemetry */}
                       {(viewingRouter.cpu_load != null || viewingRouter.free_memory != null) && (
                         <div className="grid grid-cols-2 gap-3">
