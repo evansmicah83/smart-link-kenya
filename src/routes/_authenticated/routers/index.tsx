@@ -203,11 +203,12 @@ function RoutersPage() {
         event: "UPDATE", schema: "public", table: "routers",
         filter: `tenant_id=eq.${tenantId}`,
       }, (payload) => {
-        // Patch the cached query data in-place so UI updates instantly without full refetch
+        // Patch cache in-place AND keep viewingRouter modal in sync
         queryClient.setQueryData(["routers", tenantId], (old: any[]) => {
           if (!old) return old;
           return old.map((r) => r.id === payload.new.id ? { ...r, ...payload.new } : r);
         });
+        setViewingRouter((prev: any) => prev?.id === payload.new.id ? { ...prev, ...payload.new } : prev);
       })
       .on("postgres_changes", {
         event: "INSERT", schema: "public", table: "routers",
@@ -324,6 +325,8 @@ function RoutersPage() {
       try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
       realtimeChannelRef.current = null;
     }
+    // Refresh router list so newly added/provisioned router appears immediately
+    queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
   }
 
   function addLog(message: string, level: LogLevel = "info") {
@@ -457,7 +460,13 @@ function RoutersPage() {
         addLog(row.message || row.stage, row.success ? "success" : "error");
         setCompletedStages((prev) => new Set([...prev, row.stage]));
         if (row.stage === "complete") {
-          queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
+          // Fetch fresh router row and patch cache so table is live when user clicks Done
+          supabase.from("routers").select("*").eq("id", routerId).single().then(({ data }) => {
+            if (!data) return;
+            queryClient.setQueryData(["routers", tenantId], (old: any[]) =>
+              old ? old.map((r) => r.id === data.id ? { ...r, ...data } : r) : [data]
+            );
+          });
         }
       })
       .subscribe();
@@ -531,17 +540,21 @@ function RoutersPage() {
     setSyncing((prev) => new Set([...prev, id]));
     try {
       const { data: row, error } = await supabase.from("routers")
-        .select("status, last_seen, last_poll_at, name").eq("id", id).single();
+        .select("*").eq("id", id).single();
       if (error) throw error;
+      // Patch cache with fresh DB row so table reflects real state immediately
+      queryClient.setQueryData(["routers", tenantId], (old: any[]) =>
+        old ? old.map((r) => r.id === id ? { ...r, ...row } : r) : old
+      );
+      // Also update viewingRouter if it's open for this router
+      setViewingRouter((prev: any) => prev?.id === id ? { ...prev, ...row } : prev);
       const lastPoll = row?.last_poll_at ? new Date(row.last_poll_at) : null;
       const pollAgeMin = lastPoll ? Math.floor((Date.now() - lastPoll.getTime()) / 60000) : null;
       const isPolling = pollAgeMin !== null && pollAgeMin < 3;
       if (isPolling) {
         toast.success(`${row.name} is online — last poll ${pollAgeMin < 1 ? "just now" : `${pollAgeMin}m ago`}`);
       } else {
-        await supabase.from("routers").update({ status: "offline", api_connected: false } as any).eq("id", id);
-        toast.error(`${row?.name} missed polls — marked offline. Re-run provisioning script to reconnect.`);
-        queryClient.invalidateQueries({ queryKey: ["routers", tenantId] });
+        toast.error(`${row?.name} missed polls — not polling. Re-run provisioning script to reconnect.`);
       }
     } catch {
       toast.error("Sync failed");
