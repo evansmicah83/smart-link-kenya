@@ -152,6 +152,7 @@ function RoutersPage() {
   const [viewingRouter, setViewingRouter] = useState<any | null>(null);
   const [viewTab, setViewTab] = useState<"details" | "scripts" | "diagnostics">("details");
   const [refreshingView, setRefreshingView] = useState(false);
+  const [viewingNasExists, setViewingNasExists] = useState<boolean | null>(null);
 
   // ── Queries ───────────────────────────────────────────────────
   const tenantQuery = useQuery({
@@ -508,12 +509,17 @@ function RoutersPage() {
     if (!viewingRouter) return;
     setRefreshingView(true);
     try {
-      const { data } = await supabase.from("routers").select("*").eq("id", viewingRouter.id).single();
-      if (!data) return;
-      setViewingRouter((prev: any) => ({ ...prev, ...data }));
-      queryClient.setQueryData(["routers", tenantId], (old: any[]) =>
-        old ? old.map((r) => r.id === data.id ? { ...r, ...data } : r) : old
-      );
+      const [{ data: routerData }, { count }] = await Promise.all([
+        supabase.from("routers").select("*").eq("id", viewingRouter.id).single(),
+        supabase.from("nas_devices" as any).select("id", { count: "exact", head: true }).eq("router_id", viewingRouter.id),
+      ]);
+      if (routerData) {
+        setViewingRouter((prev: any) => ({ ...prev, ...routerData }));
+        queryClient.setQueryData(["routers", tenantId], (old: any[]) =>
+          old ? old.map((r) => r.id === routerData.id ? { ...r, ...routerData } : r) : old
+        );
+      }
+      setViewingNasExists((count ?? 0) > 0);
     } finally {
       setRefreshingView(false);
     }
@@ -713,7 +719,7 @@ function RoutersPage() {
                         </p>
                       </div>
                       <div className="flex items-center gap-1.5 sm:justify-end flex-wrap">
-                        <button onClick={() => { setViewingRouter(r); setViewTab("details"); }}
+                        <button onClick={() => { setViewingRouter(r); setViewTab("details"); setViewingNasExists(null); }}
                           className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium hover:bg-muted transition-colors">
                           <Search className="w-3.5 h-3.5" /><span className="hidden sm:inline">View</span>
                         </button>
@@ -1046,7 +1052,7 @@ function RoutersPage() {
                           { label: "RouterOS", ok: !!viewingRouter.ros_version, okText: viewingRouter.ros_version || "—", failText: "Unknown" },
                           { label: "Board", ok: !!viewingRouter.board_name, okText: viewingRouter.board_name || "—", failText: "Unknown" },
                           { label: "Backup", ok: !!viewingRouter.backup_at, okText: viewingRouter.backup_at ? new Date(viewingRouter.backup_at).toLocaleDateString() : "—", failText: "No backup yet" },
-                          { label: "NAS Registered", ok: true, okText: "In RADIUS DB", failText: "Missing" },
+                          { label: "NAS Registered", ok: viewingNasExists === true, okText: "In RADIUS DB", failText: viewingNasExists === false ? "Not found — re-provision" : "Checking..." },
                         ].map((check, i, arr) => (
                           <div key={check.label} className={`flex items-center justify-between px-4 py-3 ${i < arr.length - 1 ? "border-b border-border" : ""}`}>
                             <span className="text-sm text-foreground">{check.label}</span>
