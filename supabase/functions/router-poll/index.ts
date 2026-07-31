@@ -132,11 +132,12 @@ serve(async (req: Request) => {
     const uptimeSec = uptimeRaw ? parseUptime(uptimeRaw) : null;
     const interfaceTraffic = { rx_bytes: rxBytes, tx_bytes: txBytes, sampled_at: now };
 
-    const { data: telRouter } = await db.from("routers").select("status").eq("id", routerId).maybeSingle();
+    const { data: telRouter } = await db.from("routers").select("status, provisioned_at").eq("id", routerId).maybeSingle();
     const telKeepStatus = telRouter?.status === "active" || telRouter?.status === "ready";
+    const telRestoreActive = telRouter?.status === "offline" && !!telRouter?.provisioned_at;
 
     await db.from("routers").update({
-      ...(telKeepStatus ? {} : { status: "online" }),
+      ...(telKeepStatus ? {} : telRestoreActive ? { status: "active" } : { status: "online" }),
       last_seen: now,
       last_poll_at: now,
       api_connected: true,
@@ -166,11 +167,13 @@ serve(async (req: Request) => {
   }
 
   // Standard poll: heartbeat + command queue
-  // Don't overwrite active/ready status — only set online if not in a provisioned state
-  const { data: currentRouter } = await db.from("routers").select("status").eq("id", routerId).maybeSingle();
+  // If router was marked offline but is now polling again, restore to active/online
+  const { data: currentRouter } = await db.from("routers").select("status, provisioned_at").eq("id", routerId).maybeSingle();
+  const wasProvisioned = !!currentRouter?.provisioned_at;
   const keepStatus = currentRouter?.status === "active" || currentRouter?.status === "ready";
+  const restoreActive = currentRouter?.status === "offline" && wasProvisioned;
   await db.from("routers").update({
-    ...(keepStatus ? {} : { status: "online" }),
+    ...(keepStatus ? {} : restoreActive ? { status: "active" } : { status: "online" }),
     last_seen: now,
     last_poll_at: now,
     api_connected: true,
