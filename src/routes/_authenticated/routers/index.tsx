@@ -1333,9 +1333,10 @@ function RoutersPage() {
                   </>
                 ) : (
                   <>
-                    <p className="text-sm text-success font-medium">✓ Router provisioned and marked Ready</p>
+                    <p className="text-sm text-success font-medium">✓ Router provisioned and marked Active</p>
                     <p className="text-xs text-success/70 mt-1">
-                      All services verified, NAS registered, RADIUS + accounting configured, backup saved, telemetry running every 5 min.
+                      {logLines.some(l => l.message?.includes("verify")) ? "All services verified. " : ""}
+                      NAS registered, RADIUS configured, poll scheduler running every 1 min, telemetry every 5 min.
                     </p>
                   </>
                 )}

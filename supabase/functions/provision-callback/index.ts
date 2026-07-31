@@ -16,7 +16,7 @@ const STAGE_MESSAGES: Record<string, string> = {
   addresses:       "[addresses] DHCP server and gateway address configured",
   "pppoe-aaa":     "[pppoe-aaa] PPPoE server and AAA profile configured",
   "hotspot-files": "[hotspot-files] Hotspot profile, server and walled garden configured",
-  complete:        "[done] Configuration complete.",
+  complete:        "[done] Router active — configuration complete.",
   // Error / recovery stages
   validate_fail:   "[validate] No internet on uplink — aborting",
   verify_ok:       "[verify] All services verified and running",
