@@ -175,7 +175,7 @@ serve(async (req: Request) => {
         await db.from("nas_devices").insert(nasPayload);
       }
     });
-    await log("nas_db", "✓ NAS registered: \"" + router.name + "\" — auto-registered with SmartLinkNet RADIUS");
+    await log("nas_db", "✓ NAS registered: " + router.name + " — auto-registered with SmartLinkNet RADIUS");
 
     // ── Step 5: Queue re_provision command ───────────────────────────────────
     await db.from("router_commands").delete()

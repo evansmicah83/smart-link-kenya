@@ -419,8 +419,6 @@ function RoutersPage() {
       .subscribe();
     realtimeChannelRef.current = channel;
 
-    addLog("[queued] Starting device configuration...", "info");
-
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token ?? null;
