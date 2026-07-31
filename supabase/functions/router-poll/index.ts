@@ -132,8 +132,11 @@ serve(async (req: Request) => {
     const uptimeSec = uptimeRaw ? parseUptime(uptimeRaw) : null;
     const interfaceTraffic = { rx_bytes: rxBytes, tx_bytes: txBytes, sampled_at: now };
 
+    const { data: telRouter } = await db.from("routers").select("status").eq("id", routerId).maybeSingle();
+    const telKeepStatus = telRouter?.status === "active" || telRouter?.status === "ready";
+
     await db.from("routers").update({
-      status: "online",
+      ...(telKeepStatus ? {} : { status: "online" }),
       last_seen: now,
       last_poll_at: now,
       api_connected: true,
@@ -162,9 +165,12 @@ serve(async (req: Request) => {
     return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
   }
 
-  // ── Standard poll: heartbeat + command queue ──────────────────────────────
+  // Standard poll: heartbeat + command queue
+  // Don't overwrite active/ready status — only set online if not in a provisioned state
+  const { data: currentRouter } = await db.from("routers").select("status").eq("id", routerId).maybeSingle();
+  const keepStatus = currentRouter?.status === "active" || currentRouter?.status === "ready";
   await db.from("routers").update({
-    status: "online",
+    ...(keepStatus ? {} : { status: "online" }),
     last_seen: now,
     last_poll_at: now,
     api_connected: true,

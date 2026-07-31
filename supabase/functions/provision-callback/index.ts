@@ -4,28 +4,27 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
+// Stages that produce a visible log line. Anything not listed here is silently
+// recorded in the DB but does NOT insert a provision_logs row visible in the UI.
 const STAGE_MESSAGES: Record<string, string> = {
-  discover:      "✓ Interface discovery complete — existing config synchronized",
-  validate:      "✓ Pre-flight validation passed — internet connectivity confirmed",
-  validate_fail: "✕ Validation failed — no internet on uplink, aborting",
-  backup:        "✓ Router backup saved (sln-pre-provision)",
-  identity:      "✓ Router identity set",
-  bridge:        "✓ Bridge interface + ports configured",
-  network:       "✓ Gateway IP, DHCP server, DHCP pool — active",
-  dns:           "✓ DNS configured (8.8.8.8, 8.8.4.4)",
-  firewall:      "✓ Firewall rules applied — input/forward chains secured",
-  nat:           "✓ NAT masquerade — internet routing live",
-  radius:        "✓ RADIUS client configured — cloud AAA + accounting connected",
-  hotspot:       "✓ Hotspot server + captive portal — live",
-  walled_garden: "✓ Walled garden — portal, M-Pesa, Supabase allowed pre-auth",
-  pppoe:         "✓ PPPoE server — live, subscribers can dial in",
-  queues:        "✓ Bandwidth queues configured with burst support",
-  api_user:      "✓ API user (sln-api) created on router",
-  scheduler:     "✓ Poll (1 min) + telemetry (5 min) schedulers running",
-  verify_ok:     "✓ Service verification passed — all configured services confirmed running",
-  verify_fail:   "⚠ Service verification found issues — check errors",
-  rollback:      "↩ Rollback executed — restored sln-pre-provision backup",
-  complete:      "✓ Router fully provisioned and marked Ready",
+  // Centipid-visible stages (shown in terminal log)
+  queued:          "[queued] Starting device configuration...",
+  connect:         "[connect] Connecting to device API...",
+  harden:          "[harden] Applying security hardening, firewall and RADIUS...",
+  bridge:          "[bridge] Bridge interface and ports configured",
+  pool:            "[pool] IP address pool configured",
+  addresses:       "[addresses] DHCP server and gateway address configured",
+  "pppoe-aaa":     "[pppoe-aaa] PPPoE server and AAA profile configured",
+  "hotspot-files": "[hotspot-files] Hotspot profile, server and walled garden configured",
+  complete:        "[done] Configuration complete.",
+  // Error / recovery stages
+  validate_fail:   "[validate] No internet on uplink — aborting",
+  verify_ok:       "[verify] All services verified and running",
+  verify_fail:     "[verify] Service verification found issues",
+  rollback:        "[rollback] Rollback executed — pre-provision backup restored",
+  // Silent stages — recorded in DB, not shown in UI terminal
+  // discover, validate, backup, identity, dns, firewall, nat, radius,
+  // queues, api_user, scheduler, nas_db, radius_db, triggered, timeout
 };
 
 serve(async (req: Request) => {
@@ -48,9 +47,9 @@ serve(async (req: Request) => {
 
     // ── Stage-specific router table updates ───────────────────────────────
     if (stage === "complete") {
-      // Mark router as Ready — fully provisioned
+      // Mark router as Active — fully provisioned
       await db.from("routers").update({
-        status: "ready",
+        status: "active",
         api_connected: true,
         last_seen: now,
         last_poll_at: now,
@@ -101,22 +100,20 @@ serve(async (req: Request) => {
       .eq("id", routerId)
       .maybeSingle();
 
-    // Build human-readable message
-    let message = STAGE_MESSAGES[stage] || "✓ Stage: " + stage;
-    if (stage === "complete" && publicIp) {
-      message = "✓ Router fully provisioned and marked Ready — public IP: " + publicIp;
+    // Only insert a provision_log row for stages that have a visible message
+    const message = STAGE_MESSAGES[stage];
+    if (message !== undefined) {
+      const finalMessage = (stage === "verify_fail" && errors)
+        ? "[verify] Issues: " + errors.replace(/,/g, ", ")
+        : message;
+      await db.from("provision_logs").insert({
+        router_id: routerId,
+        tenant_id: router?.tenant_id ?? null,
+        stage,
+        message: finalMessage,
+        success: stage !== "validate_fail" && stage !== "verify_fail" && stage !== "rollback",
+      });
     }
-    if (stage === "verify_fail" && errors) {
-      message = "⚠ Verification issues: " + errors.replace(/,/g, ", ");
-    }
-
-    await db.from("provision_logs").insert({
-      router_id: routerId,
-      tenant_id: router?.tenant_id ?? null,
-      stage,
-      message,
-      success: stage !== "validate_fail" && stage !== "verify_fail" && stage !== "rollback",
-    });
 
     return new Response("ok", { status: 200, headers: { "content-type": "text/plain" } });
   } catch (err) {

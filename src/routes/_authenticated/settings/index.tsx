@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -100,7 +100,6 @@ function SettingsPage() {
   const [mpesaForm, setMpesaForm] = useState<Record<string, any>>(settings.data?.mpesa ?? {});
   const [smsForm, setSmsForm] = useState<Record<string, any>>(settings.data?.sms ?? {});
   const [networkForm, setNetworkForm] = useState<Record<string, any>>(settings.data?.network ?? {});
-  const [notifForm, setNotifForm] = useState<Record<string, any>>(settings.data?.notifications ?? {});
   const [securityForm, setSecurityForm] = useState<Record<string, any>>(settings.data?.security ?? {});
   const [branchForm, setBranchForm] = useState({ name: "", city: "", code: "", phone: "", address: "" });
   const [branchOpen, setBranchOpen] = useState(false);

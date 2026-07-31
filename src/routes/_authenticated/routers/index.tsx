@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect, useRef, useMemo } from "react";
 import {
   RefreshCw, ChevronLeft, AlertTriangle,
@@ -75,28 +75,7 @@ function BrandFooter() {
 
 type View = "landing" | "wizard";
 type LogLevel = "info" | "success" | "warn" | "error";
-type LogLine = { ts: string; level: LogLevel; icon: string; message: string };
-
-const PROVISION_STAGES = [
-  { key: "discover",      label: "Discover" },
-  { key: "validate",      label: "Validate" },
-  { key: "backup",        label: "Backup" },
-  { key: "identity",      label: "Identity" },
-  { key: "bridge",        label: "Bridge" },
-  { key: "network",       label: "DHCP / IP" },
-  { key: "dns",           label: "DNS" },
-  { key: "firewall",      label: "Firewall" },
-  { key: "nat",           label: "NAT" },
-  { key: "radius",        label: "RADIUS" },
-  { key: "hotspot",       label: "Hotspot",       service: "hotspot" },
-  { key: "walled_garden", label: "Walled Garden",  service: "hotspot" },
-  { key: "pppoe",         label: "PPPoE",          service: "pppoe" },
-  { key: "queues",        label: "Queues" },
-  { key: "api_user",      label: "API User" },
-  { key: "scheduler",     label: "Scheduler" },
-  { key: "verify_ok",     label: "Verified" },
-  { key: "complete",      label: "Ready" },
-];
+type LogLine = { level: LogLevel; message: string };
 
 function RoutersPage() {
   const { user } = useAuth();
@@ -134,7 +113,6 @@ function RoutersPage() {
   // Step 4 — apply logs
   const [logLines, setLogLines] = useState<LogLine[]>([]);
   const [applyDone, setApplyDone] = useState(false);
-  const [completedStages, setCompletedStages] = useState<Set<string>>(new Set());
   const logsEndRef = useRef<HTMLDivElement>(null);
   const realtimeChannelRef = useRef<any | null>(null);
 
@@ -243,7 +221,7 @@ function RoutersPage() {
   }
 
   function routerStatusBadge(r: any): { label: string; color: string } {
-    if (r.status === "ready" && isRouterOnline(r)) return { label: "🟢 Ready", color: "text-success border-success/40 bg-success/10" };
+    if ((r.status === "active" || r.status === "ready") && isRouterOnline(r)) return { label: "🟢 Active", color: "text-success border-success/40 bg-success/10" };
     if (r.status === "rollback") return { label: "↩ Rollback", color: "text-amber-600 border-amber-400/40 bg-amber-500/10" };
     if (r.status === "failed") return { label: "✕ Failed", color: "text-destructive border-destructive/40 bg-destructive/10" };
     if (r.status === "provisioning") return { label: "⚙ Provisioning", color: "text-primary border-primary/40 bg-primary/10" };
@@ -321,7 +299,6 @@ function RoutersPage() {
     setCheckingOnline(false);
     setLogLines([]);
     setApplyDone(false);
-    setCompletedStages(new Set());
     if (pollRef.current) clearInterval(pollRef.current);
     if (realtimeChannelRef.current) {
       try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
@@ -332,9 +309,7 @@ function RoutersPage() {
   }
 
   function addLog(message: string, level: LogLevel = "info") {
-    const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    const icon = level === "success" ? "✓" : level === "error" ? "✕" : level === "warn" ? "⚠" : "•";
-    setLogLines((prev) => [...prev, { ts, level, icon, message }]);
+    setLogLines((prev) => [...prev, { ts: "", level, icon: "", message }]);
   }
 
   // ── Step 1 → 2: Create router row ────────────────────────────
@@ -389,36 +364,6 @@ function RoutersPage() {
       } as any).eq("id", routerId);
       if (updateErr) throw updateErr;
 
-      // Upsert NAS device
-      const { data: existingNas } = await supabase.from("nas_devices" as any)
-        .select("id").eq("router_id", routerId).maybeSingle();
-      const nasPayload = {
-        tenant_id: tenantId, router_id: routerId, name: identity.trim(), vendor: "mikrotik",
-        nas_identifier: identity.trim(), shared_secret: "SmartLinkNet-Public-Fallback",
-        auth_port: 1812, acct_port: 1813, coa_port: 3799, is_active: true,
-        dynamic_profile_enabled: true, updated_at: new Date().toISOString(),
-      };
-      if ((existingNas as any)?.id) {
-        await supabase.from("nas_devices" as any).update(nasPayload).eq("id", (existingNas as any).id);
-      } else {
-        await supabase.from("nas_devices" as any).insert(nasPayload);
-      }
-
-      // Upsert RADIUS record
-      const { data: existingRadius } = await supabase.from("radius_servers" as any)
-        .select("id").eq("tenant_id", tenantId).eq("name", identity.trim()).maybeSingle();
-      const radiusPayload = {
-        tenant_id: tenantId, name: identity.trim(), auth_port: 1812, acct_port: 1813,
-        shared_secret: "SmartLinkNet-Public-Fallback", protocol: "mschapv2",
-        is_primary: true, is_active: true, is_healthy: true,
-        timeout_ms: 3000, retry_count: 3, priority: 1, updated_at: new Date().toISOString(),
-      };
-      if ((existingRadius as any)?.id) {
-        await supabase.from("radius_servers" as any).update(radiusPayload).eq("id", (existingRadius as any).id);
-      } else {
-        await supabase.from("radius_servers" as any).insert({ ...radiusPayload, host: "pending" });
-      }
-
       // Generate provision token — script is now ready with all config in DB
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
@@ -445,7 +390,6 @@ function RoutersPage() {
     setStep(4);
     setApplyDone(false);
     setLogLines([]);
-    setCompletedStages(new Set());
 
     if (realtimeChannelRef.current) {
       try { supabase.removeChannel(realtimeChannelRef.current); } catch {}
@@ -459,8 +403,9 @@ function RoutersPage() {
       }, (payload) => {
         const row = (payload as any).new;
         if (!row) return;
-        addLog(row.message || row.stage, row.success ? "success" : "error");
-        setCompletedStages((prev) => new Set([...prev, row.stage]));
+        const isError = !row.success || ["validate_fail", "rollback"].includes(row.stage);
+        const isWarn = row.stage === "verify_fail";
+        addLog(row.message || row.stage, isError ? "error" : isWarn ? "warn" : "info");
         if (row.stage === "complete") {
           // Fetch fresh router row and patch cache so table is live when user clicks Done
           supabase.from("routers").select("*").eq("id", routerId).single().then(({ data }) => {
@@ -474,7 +419,7 @@ function RoutersPage() {
       .subscribe();
     realtimeChannelRef.current = channel;
 
-    addLog("Activating router — backend is configuring everything now...", "info");
+    addLog("[queued] Starting device configuration...", "info");
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -872,7 +817,7 @@ function RoutersPage() {
                       {[
                         { label: "Name", value: viewingRouter.name },
                         { label: "Model", value: viewingRouter.model || "—" },
-                        { label: "Status", value: routerStatusBadge(viewingRouter).label, status: viewingRouter.status },
+      { label: "Status", value: routerStatusBadge(viewingRouter).label, status: viewingRouter.status },
                         { label: "Public IP", value: viewingRouter.public_ip || "—" },
                         { label: "Services", value: viewingRouter.services?.map((s: string) => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ") || "—" },
                         { label: "Bridge Ports", value: viewingRouter.bridge_ports?.join(", ") || viewingRouter.bridge_port || "—" },
@@ -1042,7 +987,7 @@ function RoutersPage() {
                       {/* Health checks */}
                       <div className="rounded-xl border border-border overflow-hidden">
                         {[
-                          { label: "Router Status", ok: isRouterOnline(viewingRouter), okText: viewingRouter.status === "ready" ? "Ready" : "Online", failText: "Offline" },
+                          { label: "Router Status", ok: isRouterOnline(viewingRouter), okText: (viewingRouter.status === "active" || viewingRouter.status === "ready") ? "Active" : "Online", failText: "Offline" },
                           { label: "Cloud Polling", ok: !!viewingRouter.api_connected, okText: "Active — polls every 1 min", failText: "Not polling — re-run script" },
                           { label: "Telemetry", ok: viewingRouter.cpu_load != null, okText: "Syncing every 5 min", failText: "Not yet received" },
                           { label: "RADIUS", ok: viewingRouter.radius_healthy === true, okText: "Reachable from router", failText: viewingRouter.radius_healthy === false ? "Unreachable — check RADIUS server" : "Not yet verified" },
@@ -1304,76 +1249,68 @@ function RoutersPage() {
         {/* ── Step 4: Deployment logs ── */}
         {step === 4 && (
           <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
-            <h2 className="font-bold text-base mb-1">
-              {applyDone
-                ? logLines.some(l => l.level === "error") ? "⚠ Deployment Error" : "✓ Router Configured"
-                : "Configuring router..."}
-            </h2>
-            <p className="text-xs text-muted-foreground mb-5">
-              {applyDone
-                ? logLines.some(l => l.level === "error")
-                  ? "An error occurred. Check logs and retry."
-                  : "Router fully configured — all services live and ready for subscribers."
-                : "Router is applying configuration — each stage reports back live as it executes..."}
-            </p>
+            {/* Centipid-style header */}
+            {applyDone && !logLines.some(l => l.level === "error") ? (
+              <>
+                <h2 className="font-bold text-base mb-1">Router is live</h2>
+                <p className="text-xs text-muted-foreground mb-5">Services are configured. Subscribers can authenticate through this NAS.</p>
+              </>
+            ) : (
+              <>
+                <h2 className="font-bold text-base mb-1">
+                  {applyDone && logLines.some(l => l.level === "error") ? "⚠ Deployment Error" : "Applying configuration..."}
+                </h2>
+                <p className="text-xs text-muted-foreground mb-5">
+                  {applyDone && logLines.some(l => l.level === "error")
+                    ? "An error occurred. Check logs and retry."
+                    : "Configuration runs in the background — logs update below."}
+                </p>
+              </>
+            )}
 
-            {/* Stage progress tracker */}
-            <div className="rounded-xl border border-border bg-background p-3 mb-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Provisioning stages</p>
-              <div className="flex flex-wrap gap-1.5">
-                {PROVISION_STAGES
-                  .filter(s => !s.service || selectedServices.includes(s.service))
-                  .map((s) => {
-                    const done = completedStages.has(s.key);
-                    return (
-                      <span key={s.key} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border font-medium transition-all
-                        ${done ? "bg-success/10 border-success/30 text-success" : "bg-muted border-border text-muted-foreground"}`}>
-                        {done ? <Check className="w-2.5 h-2.5" /> : <span className="w-2.5 h-2.5 rounded-full border border-current opacity-40" />}
-                        {s.label}
-                      </span>
-                    );
-                  })}
+            {/* Router info card — Centipid style */}
+            <div className="rounded-xl border border-border bg-background mb-5 overflow-hidden">
+              {[
+                { label: "Router", value: identity },
+                { label: "VPN address", value: routerPublicIp ?? "—" },
+                { label: "Services", value: selectedServices.map(s => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ") || "—" },
+                { label: "Ports", value: bridgePorts.join(", ") },
+              ].map((row) => (
+                <div key={row.label} className="flex items-center justify-between px-4 py-3 text-sm border-b border-border">
+                  <span className="text-muted-foreground">{row.label}</span>
+                  <span className="font-semibold text-foreground">{row.value}</span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between px-4 py-3 text-sm">
+                <span className="text-muted-foreground">Status</span>
+                <span className={`font-bold ${
+                  applyDone && !logLines.some(l => l.level === "error") ? "text-success"
+                  : applyDone ? "text-destructive"
+                  : "text-primary"
+                }`}>
+                  {applyDone && !logLines.some(l => l.level === "error") ? "Active"
+                    : applyDone ? "Failed"
+                    : "running"}
+                </span>
               </div>
             </div>
 
-            {/* Summary grid */}
-            <div className="rounded-xl border border-border bg-background mb-5 overflow-hidden">
-              {[
-                { label: "Router", value: identity, icon: "📶" },
-                { label: "Public IP", value: routerPublicIp ?? "—", icon: "🌐" },
-                { label: "Services", value: selectedServices.map(s => s === "hotspot" ? "Hotspot" : "PPPoE").join(", ") || "—", icon: "⚙️" },
-                { label: "Bridge Ports", value: bridgePorts.join(", "), icon: "🌉" },
-                { label: "Subnet", value: customSubnet ? subnetValue : "172.31.0.0/16", icon: "🗂️" },
-              ].map((row, i) => (
-                <div key={row.label} className={`flex items-center justify-between px-4 py-3 text-sm ${i < 4 ? "border-b border-border" : ""}`}>
-                  <div className="flex items-center gap-2">
-                    <span>{row.icon}</span>
-                    <span className="text-muted-foreground">{row.label}</span>
-                  </div>
-                  <span className="font-mono font-semibold text-foreground">{row.value}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Logs */}
+            {/* Logs — Centipid terminal style */}
             <div className="mb-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Deployment Log</p>
-              <div className="rounded-xl border border-border bg-background/50 overflow-hidden font-mono text-xs">
+              <div className="rounded-xl border border-border bg-[#1a1a1a] overflow-hidden font-mono text-xs">
                 {logLines.length === 0 ? (
                   <div className="p-4 flex items-center gap-2 text-muted-foreground">
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Starting...
                   </div>
                 ) : (
-                  <div className="divide-y divide-border/40">
+                  <div className="p-3 space-y-0.5 max-h-64 overflow-y-auto">
                     {logLines.map((log, i) => (
-                      <div key={i} className={`px-4 py-2.5 flex gap-3 items-start
-                        ${log.level === "success" ? "bg-success/5 text-success"
-                          : log.level === "error" ? "bg-destructive/5 text-destructive"
-                          : log.level === "warn" ? "bg-amber-500/5 text-amber-600 dark:text-amber-400"
-                          : "bg-transparent text-foreground"}`}>
-                        <span className="text-sm shrink-0 w-6 text-center">{log.icon}</span>
-                        <span className="text-muted-foreground/60 min-w-max">{log.ts}</span>
-                        <span className="flex-1">{log.message}</span>
+                      <div key={i} className={`leading-relaxed ${
+                        log.level === "error" ? "text-red-400"
+                        : log.level === "warn" ? "text-amber-400"
+                        : "text-gray-200"
+                      }`}>
+                        {log.message}
                       </div>
                     ))}
                     <div ref={logsEndRef} />
@@ -1471,14 +1408,32 @@ function RoutersPage() {
                   </button>
                   <button onClick={resetWizard}
                     className="rounded-full bg-card border border-border px-5 py-2.5 text-sm font-semibold hover:bg-muted transition-colors">
-                    Close
+                    All routers
                   </button>
                 </div>
               ) : (
-                <button onClick={resetWizard} disabled={!applyDone}
-                  className="rounded-full bg-success hover:bg-success/90 text-success-foreground px-5 sm:px-6 py-2.5 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                  {applyDone ? "✓ Done" : "Activating..."}
-                </button>
+                <div className="flex gap-2">
+                  <button onClick={resetWizard} disabled={!applyDone}
+                    className="rounded-full border border-border bg-card px-4 sm:px-5 py-2.5 text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    All routers
+                  </button>
+                  {applyDone && (
+                    <button onClick={() => {
+                      // Open the just-provisioned router in the view modal
+                      const r = routers.find(x => x.id === routerId);
+                      if (r) { setViewingRouter(r); setViewTab("details"); setViewingNasExists(null); }
+                      resetWizard();
+                    }}
+                      className="flex items-center gap-2 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground px-5 sm:px-6 py-2.5 text-sm font-semibold transition-colors">
+                      <Check className="w-4 h-4" /> View router
+                    </button>
+                  )}
+                  {!applyDone && (
+                    <button disabled className="rounded-full bg-primary/50 text-primary-foreground px-5 sm:px-6 py-2.5 text-sm font-semibold cursor-not-allowed">
+                      Activating...
+                    </button>
+                  )}
+                </div>
               )}
             </>
           )}

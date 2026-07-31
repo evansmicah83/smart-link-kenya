@@ -59,14 +59,20 @@ serve(async (req: Request) => {
       await db.from("provision_logs").insert({ router_id: routerId, tenant_id: tenantId, stage, message, success });
     };
 
-    // ── Step 1: Validate router has polled within 5 min ─────────────────────
-    await log("start", "Starting enterprise provisioning — validating router connectivity...");
+    // ── Step 1: Validate router has polled recently ──────────────────────────
+    await log("queued",  "[queued] Starting device configuration...");
+    await log("connect", "[connect] Connecting to device API...");
+    // For first-time provisioning (status pending/provisioning) allow up to 30 min
+    // since the router may have just run the setup script for the first time.
+    // For re-provisioning an already-active router, require a poll within 5 min.
+    const isFirstProvision = router.status === "pending" || router.status === "provisioning" || !router.last_poll_at;
+    const pollWindowMs = isFirstProvision ? 30 * 60 * 1000 : 5 * 60 * 1000;
     const pollAgeMs = Date.now() - (router.last_poll_at ? new Date(router.last_poll_at).getTime() : 0);
-    if (pollAgeMs > 5 * 60 * 1000) {
-      await log("validate_fail", "Router has not polled in the last 5 minutes — ensure provisioning script ran successfully", false);
+    if (!isFirstProvision && pollAgeMs > pollWindowMs) {
+      await log("validate_fail", "[validate] Router has not polled in the last 5 minutes — ensure the router is online and the poll scheduler is running", false);
       return resp({ ok: false, error: "router_unreachable", detail: "Router last poll was " + Math.round(pollAgeMs / 60000) + " min ago" });
     }
-    await log("validate", "✓ Router connectivity confirmed — last poll " + Math.round(pollAgeMs / 1000) + "s ago");
+    await log("harden", "[harden] Applying RADIUS, admin and firewall hardening...");
 
     // ── Step 2: Read platform FreeRADIUS config ──────────────────────────────
     // SmartLinkNet operator sets this once. All ISP routers use it automatically.

@@ -93,7 +93,7 @@ serve(async (req) => {
   {
     const { data: radiusServers } = await supabase
       .from("radius_servers")
-      .select("id, name, host, auth_port, tenant_id, timeout_ms, shared_secret, consecutive_failures")
+      .select("id, name, host, freeradius_ip, freeradius_ip2, auth_port, acct_port, coa_port, interim_interval, tenant_id, timeout_ms, shared_secret, consecutive_failures")
       .eq("is_active", true);
 
     for (const rs of (radiusServers ?? []) as any[]) {
@@ -121,6 +121,71 @@ serve(async (req) => {
         consecutive_failures: consecutiveFailures,
         last_failure_reason:  isHealthy ? null : (probeError ?? "No response to Access-Request"),
       }).eq("id", rs.id);
+
+      // ── Auto-activate: when RADIUS first becomes reachable, push IP to all
+      // routers for this tenant and mark platform_settings as deployed.
+      // This runs without any user action.
+      if (isHealthy) {
+        const radiusIp = rs.freeradius_ip || rs.host;
+
+        // Read current platform_settings to check if already deployed
+        const { data: ps } = await supabase
+          .from("platform_settings")
+          .select("value")
+          .eq("key", "freeradius")
+          .maybeSingle();
+
+        const alreadyDeployed = ps?.value?.deployed === true
+          && ps?.value?.primary_ip === radiusIp;
+
+        if (!alreadyDeployed && radiusIp && radiusIp !== "pending" && radiusIp !== "0.0.0.0") {
+          // 1. Update platform_settings — all future provisions pick this up
+          await supabase.from("platform_settings").upsert({
+            key:   "freeradius",
+            value: {
+              ...(ps?.value ?? {}),
+              primary_ip:       radiusIp,
+              secondary_ip:     rs.freeradius_ip2 || ps?.value?.secondary_ip || null,
+              auth_port:        rs.auth_port  ?? 1812,
+              acct_port:        rs.acct_port  ?? 1813,
+              coa_port:         rs.coa_port   ?? 3799,
+              interim_interval: rs.interim_interval ?? 300,
+              deployed:         true,
+            },
+          }, { onConflict: "key" });
+
+          // 2. Push patch_radius to every active router for this tenant
+          const { data: activeRouters } = await supabase
+            .from("routers")
+            .select("id")
+            .eq("tenant_id", rs.tenant_id)
+            .in("status", ["active", "ready", "online"]);
+
+          if (activeRouters?.length) {
+            // Remove any stale pending patch_radius commands first
+            await supabase.from("router_commands")
+              .delete()
+              .in("router_id", activeRouters.map((r: any) => r.id))
+              .eq("command", "patch_radius")
+              .eq("status", "pending");
+
+            const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+            await supabase.from("router_commands").insert(
+              activeRouters.map((r: any) => ({
+                router_id:  r.id,
+                tenant_id:  rs.tenant_id,
+                command:    "patch_radius",
+                payload:    {
+                  primary_ip:   radiusIp,
+                  secondary_ip: rs.freeradius_ip2 || null,
+                },
+                status:     "pending",
+                expires_at: expires,
+              }))
+            );
+          }
+        }
+      }
 
       await record(supabase, rs.tenant_id, `radius:${rs.name}`, "radius", status, latency, probeError);
       results[`radius_${rs.id}`] = { status, latency, healthy: isHealthy };
