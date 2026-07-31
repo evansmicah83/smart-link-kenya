@@ -221,7 +221,7 @@ function RoutersPage() {
   }
 
   function routerStatusBadge(r: any): { label: string; color: string } {
-    if ((r.status === "active" || r.status === "ready") && isRouterOnline(r)) return { label: "🟢 Active", color: "text-success border-success/40 bg-success/10" };
+    if (r.status === "active" || r.status === "ready") return { label: "🟢 Active", color: "text-success border-success/40 bg-success/10" };
     if (r.status === "rollback") return { label: "↩ Rollback", color: "text-amber-600 border-amber-400/40 bg-amber-500/10" };
     if (r.status === "failed") return { label: "✕ Failed", color: "text-destructive border-destructive/40 bg-destructive/10" };
     if (r.status === "provisioning") return { label: "⚙ Provisioning", color: "text-primary border-primary/40 bg-primary/10" };
